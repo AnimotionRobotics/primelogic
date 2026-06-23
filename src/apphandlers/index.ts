@@ -91,12 +91,13 @@ export const APP_ERROR_HANDLER = (err: Error) => {
 
 export const SIGINT_HANDLER = async () => {
 
-    console.log('\n\nSIGINT_HANDLER: Gracefully shutting down initiated.');
+    console.log(`\n\n${new Date()}\nSIGINT_HANDLER: Gracefully shutting down initiated.`);
     setAllowConsume(false)
 
     // Wait for in-flight getMessage to complete before disconnecting clients.
     // The delay should be slightly longer than the getMessage blockTimeout.
-    await new Promise(resolve => setTimeout(resolve, 1100));
+    console.log('Waiting 5000ms for on-going message queue iteration finish...')
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
     let res
     try {

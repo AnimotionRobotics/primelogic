@@ -107,7 +107,7 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
             // e: FAILED_GET_JSON
             onGetJsonError(e, payload)
             nAckMessage(streamKey, groupName, 'FATAL', [msgResult[streamKey][0][0]])
-            break
+            continue
         }
 
         if (jsonResult.length === 0) {
@@ -115,13 +115,13 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
             // entry from message queue doesn't have a matching job message, call handler
             onGetJsonError('JSON_RESULT_EMPTY', payload)
             nAckMessage(streamKey, groupName, 'FATAL', [msgResult[streamKey][0][0]])
-            break
+            continue
         }
 
         if (jsonResult.length > 1) {
             onGetJsonError('JSON_RESULT_MULTI', payload)
             nAckMessage(streamKey, groupName, 'FATAL', [msgResult[streamKey][0][0]])
-            break
+            continue
         }
 
 
@@ -156,7 +156,7 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
             serviceFunctions.onServiceFunctionFailure(jsonResult[0].payload)
             // NACK
             nAckMessage(streamKey, groupName, 'SILENT', [msgResult[streamKey][0][0]])
-            break
+            continue
         }
 
 
