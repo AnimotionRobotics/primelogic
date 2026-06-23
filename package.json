@@ -1,0 +1,17 @@
+{
+    "name": "primelogic",
+    "version": "0.1.0",
+    "description": "PrimeLogic service. ",
+    "main": "app.js",
+    "scripts": {
+        "dev": "bun --watch src/app.ts",
+        "build:dist": "bun build src/app.ts --outdir ./dist --target bun --minify",
+        "build:linux": "bun build src/app.ts --compile --target=bun-linux-x64",
+        "build:linux-musl": "bun build src/app.ts --compile --target=bun-linux-x64-musl"
+    },
+    "dependencies": {
+    },
+    "devDependencies": {
+        "@types/bun": "latest"
+    }
+}

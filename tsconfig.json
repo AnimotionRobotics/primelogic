@@ -1,0 +1,14 @@
+{
+    "compilerOptions": {
+        "baseUrl": ".",
+        "moduleResolution": "node",
+        "paths": {
+            "@/*": ["./src/*"],
+            "@appinterfaces/*": ["src/appinterfaces/*"],
+            "@modules/*": ["./src/modules/*"],
+            "@services": ["./src/services/index"],
+            "@slackviews/*": ["./src/appinterfaces/slack/views/*"],
+            "@commontypes/*": ["./src/commontypes/*"]
+        }
+    }
+}
