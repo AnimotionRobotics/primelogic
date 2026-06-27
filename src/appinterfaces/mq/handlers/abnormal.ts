@@ -7,6 +7,19 @@ import type { JobMessage } from "@/commontypes/handlerType"
 
 
 /**
+ * Handler for failure situation of getting message from redis stream
+ */
+export const onGetMessageError = async () => {
+
+    // TODO - didn't get message, log this incident
+
+
+}
+
+
+
+
+/**
  * Job Message imperfect
  */
 export const onMaxRetryReached = async (job: JobMessage) => {
@@ -32,13 +45,14 @@ export const onMaxRetryReached = async (job: JobMessage) => {
 
 
 
- /**
-  *
-  */
+/**
+ *
+ */
 export const onGetJsonError = (e: string, payload: string) => {
 
     // TODO - handle getJson error
     // possible e: FAILED_GET_JSON
     // possible e: JSON_RESULT_EMPTY
     // possible e: JSON_RESULT_MULTI
+
 }
