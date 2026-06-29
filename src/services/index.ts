@@ -14,4 +14,5 @@ export const onServiceFunctionFailure = (data: object) => {
 
     // TODO - implement the final logic of errors thrown by all service handler functions
     //
+    console.log('\n\n', __filename, '\nonServiceFunctionFailure(), data: ', data)
 }

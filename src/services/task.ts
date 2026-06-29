@@ -10,6 +10,7 @@
 
 export const addFileToTask = async (config) => {
 
+    console.log('\n\n', __filename, '\naddFileToTask(), config: ', config)
     // get file id, file detail, user detail, selected project | task detail
 
 

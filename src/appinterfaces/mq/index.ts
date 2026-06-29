@@ -2,15 +2,16 @@
  * App Interface: Message Queue
  * Receiving messages from message queue, processing messages with business logic by calling respective handlers
  */
-import { ackMessage, connectMessageQueue, disconnectMessageQueue, nAckMessage, type QueueItem } from "@modules/mq"
+import type { JobMessage } from "@modules/mq"
+import { ackMessage, connectMessageQueue, disconnectMessageQueue, nAckMessage } from "@modules/mq"
 import { createStreamGroup } from '@modules/mq'
 import { allowConsuming, setAllowConsume, getMessage, delMessage } from '@modules/mq'
-import { getJson } from "@modules/cache"
+// import { getJson } from "@modules/cache"
 import { onMessageQueueConnect, onMessageQueueClose, onJobMsgFuncMissing, onMaxRetryReached } from "./handlers"
 import * as serviceFunctions from '@services'
 
-import type { JobMessage } from "@commontypes/handlerType"
-import { onGetJsonError } from "./handlers/abnormal"
+// import type { JobMessage } from "@commontypes/handlerType"
+import { onGetJsonError, onGetMessageError } from "./handlers/abnormal"
 
 
 export { disconnectMessageQueue, setAllowConsume }
@@ -64,27 +65,30 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
     while (allowConsuming) {
 
         // step 1: get queued message
-        let msgResult: QueueItem
+        let msgResult: JobMessage
         try {
             msgResult = await getMessage(streamKey, { groupName, consumerName }, 5000)
+            // msgResult ? console.log(__filename, '\ngetMessage(), msgResult: ', msgResult) : null
         } catch (e) {
             if (!allowConsuming) break
-            console.error('Error getting message:', e)
+            if (e === 'NO_MESSAGE_FOUND') continue
+            // if this error is critical, entire loop should be terminated (break)
+            if (onGetMessageError(e, streamKey, groupName, consumerName)) break
             continue
         }
 
         // Handle timeout (null msgResultponse) - just continue the loop
-        if (!msgResult || !msgResult[streamKey] || msgResult[streamKey].length === 0) {
-            // console.log(__filename, '\ngetMessage(), msgResult is null')
-            continue
-        }
+        // if (!msgResult || !msgResult[streamKey] || msgResult[streamKey].length === 0) {
+        //     // console.log(__filename, '\ngetMessage(), msgResult is null')
+        //     continue
+        // }
 
-        console.log(__filename, '\ngetMessage(), msgResult: ', msgResult[streamKey].length, '\nmsgResult[key]: ', msgResult[streamKey], '\nmsgResult[key][0][0]:', msgResult[streamKey][0][0], '\nmsgResult[key][0][1]: ', msgResult[streamKey][0][1])
+        // console.log(__filename, '\ngetMessage(), msgResult: ', msgResult)
 
 
         // step 2: get actual data according to message payload
-        const payload = msgResult[streamKey][0][1][3]
-        console.log('   payload: ', payload)
+        // const payload = msgResult[streamKey][0][1][3]
+        // console.log('   payload: ', payload)
 
         // jsonResult: (the job message convention)
         // {
@@ -99,30 +103,30 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
         //         userId,
         //     }
         // }
-        let jsonResult: JobMessage[]
-        try {
-            jsonResult = await getJson('jobs:'+payload)
-        } catch (e) {
-            console.log('Error when getJson(), e: ', e)
-            // e: FAILED_GET_JSON
-            onGetJsonError(e, payload)
-            nAckMessage(streamKey, groupName, 'FATAL', [msgResult[streamKey][0][0]])
-            continue
-        }
+        // let jsonResult: JobMessage[]
+        // try {
+        //     jsonResult = await getJson('jobs:'+payload)
+        // } catch (e) {
+        //     console.log('Error when getJson(), e: ', e)
+        //     // e: FAILED_GET_JSON
+        //     onGetJsonError(e, payload)
+        //     nAckMessage(streamKey, groupName, 'FATAL', [msgResult[streamKey][0][0]])
+        //     continue
+        // }
 
-        if (jsonResult.length === 0) {
-            console.log('couldn\'t find the json record from cache!')
-            // entry from message queue doesn't have a matching job message, call handler
-            onGetJsonError('JSON_RESULT_EMPTY', payload)
-            nAckMessage(streamKey, groupName, 'FATAL', [msgResult[streamKey][0][0]])
-            continue
-        }
+        // if (jsonResult.length === 0) {
+        //     console.log('couldn\'t find the json record from cache!')
+        //     // entry from message queue doesn't have a matching job message, call handler
+        //     onGetJsonError('JSON_RESULT_EMPTY', payload)
+        //     nAckMessage(streamKey, groupName, 'FATAL', [msgResult[streamKey][0][0]])
+        //     continue
+        // }
 
-        if (jsonResult.length > 1) {
-            onGetJsonError('JSON_RESULT_MULTI', payload)
-            nAckMessage(streamKey, groupName, 'FATAL', [msgResult[streamKey][0][0]])
-            continue
-        }
+        // if (jsonResult.length > 1) {
+        //     onGetJsonError('JSON_RESULT_MULTI', payload)
+        //     nAckMessage(streamKey, groupName, 'FATAL', [msgResult[streamKey][0][0]])
+        //     continue
+        // }
 
 
         // step 3: call handler
@@ -147,21 +151,22 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
         // only one item in jsonResult is acceptble and valid for continue
         let shouldAck: boolean = false
         try {
-            !jsonResult[0].name ? onJobMsgFuncMissing(jsonResult[0]) : null
+            !msgResult.name ? onJobMsgFuncMissing(msgResult) : null
             // retried should less than maxRetry , otherwise push to DLQ
-            jsonResult[0].name && jsonResult[0].retried < jsonResult[0].maxRetry ? shouldAck = await serviceFunctions[jsonResult[0].name](jsonResult[0].payload) : await onMaxRetryReached(jsonResult[0])
+            msgResult.name && msgResult.retried < msgResult.maxRetry ? shouldAck = await serviceFunctions[msgResult.name](msgResult.payload) : await onMaxRetryReached(msgResult)
         } catch (e) {
             console.log()
             // Only serviceFunctions throw Error msg here, for the last error handling function.
-            serviceFunctions.onServiceFunctionFailure(jsonResult[0].payload)
+            serviceFunctions.onServiceFunctionFailure(msgResult.payload)
             // NACK
-            nAckMessage(streamKey, groupName, 'SILENT', [msgResult[streamKey][0][0]])
+            nAckMessage(streamKey, groupName, 'SILENT', [msgResult.id])
             continue
         }
 
 
         // step 4: Acknowlege Message has been processed
-        shouldAck ? await ackMessage(streamKey, groupName, msgResult[streamKey][0][0]) : null
+        shouldAck ? await ackMessage(streamKey, groupName, msgResult.id) : null
+        // TODO - what if ackMessage error ?
 
 
     }

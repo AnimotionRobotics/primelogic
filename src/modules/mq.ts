@@ -143,7 +143,7 @@ export const createStreamGroup = async (streamKey: string, consumerGroupName: st
  * Add Data to Message Queue
  */
 export type JobObject = { name: string, createdAt: number, retried: number, maxRetry: number, lastTryAt: number, payload: object }
-export const dispatchMessage = async (streamKey: string, jobId: any, client: RedisClient, jobObj: JobObject) => {
+export const dispatchMessage = async (streamKey: string, jobId: any, client: RedisClient, jobMsg: string[]) => {
 
     if (!streamKey) throw 'MISSING_PARAMETER_STREAMKEY'
     if (!jobId) throw 'MISSING_PARAMETER_JOBID'
@@ -153,7 +153,8 @@ export const dispatchMessage = async (streamKey: string, jobId: any, client: Red
     // add jobId to store.
     let res
     try {
-        res = await client.send('JSON.SET', ['jobs:'+jobId, '$', JSON.stringify(jobObj)])
+        // res = await client.send('JSON.SET', ['jobs:'+jobId, '$', JSON.stringify(jobObj)])
+        res = await client.hmset('jobs:'+jobId, jobMsg)
     } catch (e) {
         console.error(e)
         throw 'ERROR_SEND_JSON.SET'
@@ -185,11 +186,23 @@ export const dispatchMessage = async (streamKey: string, jobId: any, client: Red
  * @param streamKey - The stream key to read from
  * @param config - Consumer group config (groupName, consumerName)
  * @param blockTimeout - Block timeout in milliseconds (default: 5000ms, use 0 for indefinite)
+ * @throws NO_MESSAGE_FOUND
+ * @throws ERROR_WHEN_GETMESSAGE
+ * @throws INVALID_MESSAGE_ID
+ * @throws ERROR_GET_QUEUE_ITEM
+ * @throws ERROR_WHEN_HGETALL_BY_KEY
  */
-export type QueueItem = string[]
-export const getMessage = async (streamKey: string, config?: {groupName: string, consumerName: string}, blockTimeout: number = 1000): Promise<QueueItem> => {
+export type JobMessage = {
+    id: string
+    name: string
+    createdAt: number
+    retried: number
+    maxRetry: number
+    lastTryAt: number
+    payload: any
+}
+export const getMessage = async (streamKey: string, config?: {groupName: string, consumerName: string}, blockTimeout: number = 1000): Promise<JobMessage> => {
 
-    if (!allowConsuming) return null
 
     let cmd = 'XREAD'
     let params = ['BLOCK', blockTimeout.toString(), 'COUNT', '1', 'STREAMS', streamKey, '0']
@@ -201,9 +214,11 @@ export const getMessage = async (streamKey: string, config?: {groupName: string,
     }
 
     // console.log('cmd: ', cmd, ' params: ', params)
+    if (!allowConsuming) throw 'CONSUME_NOT_ALLOWED'
 
     let response
     try {
+        // by sending 'XREAD', 'XREADGROUP', the message is added to Pending Entry List (PEL) with delivery count +1
         response = await messageQueueClient.send(cmd, params)
     } catch (e) {
         console.error('Error when XREAD, e: ', e)
@@ -212,7 +227,25 @@ export const getMessage = async (streamKey: string, config?: {groupName: string,
 
     // console.log(__filename, '\ngetMessage(), response: ', response)
     // Response is null when block timeout expires with no messages
-    return response
+    // if (response) {
+    //     console.log('   payload: ', response[streamKey][0][1][3])
+    // }
+
+    if (!response) throw 'NO_MESSAGE_FOUND'
+    if (!response || !response[streamKey] || !response[streamKey][0] || !response[streamKey][0][0]) throw 'INVALID_MESSAGE_ID'
+    if (!response || !response[streamKey] || !response[streamKey][0] || !response[streamKey][0][1] || !response[streamKey][0][1][3]) throw 'ERROR_GET_QUEUE_ITEM'
+
+    let jobMsg
+    try {
+        jobMsg = await messageQueueClient.hgetall('jobs:'+response[streamKey][0][1][3])
+    } catch (e) {
+        console.error('Error when hgetall(), e:\n', e)
+        throw 'ERROR_WHEN_HGETALL_BY_KEY'
+    }
+    // console.log(__filename, '\ngetMessage(), jobMsg: ', jobMsg)
+
+
+    return { id: response[streamKey][0][0], ...jobMsg}
 
 }
 

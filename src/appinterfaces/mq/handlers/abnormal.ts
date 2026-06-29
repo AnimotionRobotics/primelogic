@@ -1,19 +1,29 @@
 /**
  * All Abnormal Situation should be Handled by functions here
  */
-import type { JobMessage } from "@/commontypes/handlerType"
+import type { JobMessage } from "@modules/mq"
 
 
 
 
 /**
  * Handler for failure situation of getting message from redis stream
+ * @returns boolean: is critical or not
  */
-export const onGetMessageError = async () => {
+export const onGetMessageError = (e: string, streamKey: string, groupName: string, consumerName): boolean => {
+
+    let isCritical = false
 
     // TODO - didn't get message, log this incident
+    // possible value of e:
+    // ERROR_WHEN_GETMESSAGE
+    // INVALID_MESSAGE_ID
+    // ERROR_GET_QUEUE_ITEM
+    // ERROR_WHEN_HGETALL_BY_KEY
 
+    console.error('Error getting message:', e)
 
+    return isCritical
 }
 
 
