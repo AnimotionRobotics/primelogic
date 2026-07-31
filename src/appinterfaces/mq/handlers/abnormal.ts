@@ -2,6 +2,7 @@
  * All Abnormal Situation should be Handled by functions here
  */
 import type { JobMessage } from "@modules/mq"
+import type { ServiceCallResul } from '@services'
 
 
 
@@ -32,9 +33,12 @@ export const onGetMessageError = (e: string, streamKey: string, groupName: strin
 /**
  * Job Message imperfect
  */
-export const onMaxRetryReached = async (job: JobMessage) => {
+export const onMaxRetryReached = async (job: JobMessage): ServiceCallResult => {
 
     // TODO - how to deal with this siutation? Push to DLQ
+
+
+    return { err: false, ack: true }
 
 }
 
@@ -44,11 +48,14 @@ export const onMaxRetryReached = async (job: JobMessage) => {
 /**
  * No Service Handler Function Found
  */
- export const onJobMsgFuncMissing = (r) => {
+export const onJobMsgNameMissing = (r): ServiceCallResult => {
 
      console.log(__filename, '\nAbnormal happened: ', r)
-     // TODO - how to deal with it ?
+     // TODO - code logic error, should report and record to system error log
+     // save hash, use key - logs:xxxxxxx, type: incident|fail|error, msg detail, service detail
      //
+
+     return { err: false, ack: true }
 
 }
 

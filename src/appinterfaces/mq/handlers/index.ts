@@ -1,7 +1,7 @@
 /**
  * Message Queue Handlers
  */
-export { onMaxRetryReached, onJobMsgFuncMissing } from './abnormal'
+export { onGetMessageError, onMaxRetryReached, onJobMsgNameMissing } from './abnormal'
 
 
 

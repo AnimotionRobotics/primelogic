@@ -219,6 +219,7 @@ export const getHashField = async (key: string, field: string): Promise<string |
 	try {
 		value = await cacheClient.hget(key, field)
 	} catch (err) {
+        console.log(__filename, 'cacheClient.hget(), err: ', err)
 		throw 'GET_HASH_FIELD_FAILED'
 	}
 
@@ -247,6 +248,30 @@ export const getHashFields = async (key: string, fields: string[]): Promise<(str
 	if (!Array.isArray(values)) throw 'INVALID_HASH_FIELDS_RESULT'
 
 	return values
+
+}
+
+
+
+
+/**
+ *
+ */
+export const getHashAllFields = async (key: string) => {
+
+    if (!key) throw 'MISSING_PARAMETER_KEY'
+
+    let res
+    try {
+        res = await cacheClient.hgetall(key)
+    }catch(e){
+        console.error('Error cacheClient.hgetall(), e: ', e)
+        throw 'ERROR_GET_ALL_HASH_FIELDS'
+    }
+
+    if (Object.keys(res).length === 0) throw 'NO_RECORD_FOUND'
+
+    return res
 
 }
 

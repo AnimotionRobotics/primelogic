@@ -226,11 +226,6 @@ export const getMessage = async (streamKey: string, config?: {groupName: string,
     }
 
     // console.log(__filename, '\ngetMessage(), response: ', response)
-    // Response is null when block timeout expires with no messages
-    // if (response) {
-    //     console.log('   payload: ', response[streamKey][0][1][3])
-    // }
-
     if (!response) throw 'NO_MESSAGE_FOUND'
     if (!response || !response[streamKey] || !response[streamKey][0] || !response[streamKey][0][0]) throw 'INVALID_MESSAGE_ID'
     if (!response || !response[streamKey] || !response[streamKey][0] || !response[streamKey][0][1] || !response[streamKey][0][1][3]) throw 'ERROR_GET_QUEUE_ITEM'
