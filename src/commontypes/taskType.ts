@@ -13,6 +13,13 @@ export type LeaveTaskDetails = {
     endAt: number
 }
 
+export type AddFileToTaskPayload = {
+    fileId: string,
+    selectedValues: string[],
+    userId: string,
+    metadata: string,
+    responseUrl?: string
+}
 
 export type CreateLeaveTaskPayload = {
     taskType: 'leave',
