@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'bun:test';
+import { beforeEach, describe, it, expect, vi } from 'bun:test';
 import { addFileToTask } from '@services';
 import * as cacheMod from '@modules/cache';
 

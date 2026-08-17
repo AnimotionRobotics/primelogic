@@ -29,7 +29,7 @@ export const onServiceFunctionFailure = (data: object) => {
  * @returns boolean telling message queue handler if the message is properly handled, letting it know should perform ack or nack
  */
 export type ServiceCallResult = { err: boolean, ack: boolean, msg?: string }
-export const serviceRoute = async (funcName: string, data: any): Promise<ServiceResult> => {
+export const serviceRoute = async (funcName: string, data: any): Promise<ServiceCallResult> => {
 
 
     if (!funcName) throw 'MISSING_PARAMETER_FUNCNAME'

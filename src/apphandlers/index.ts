@@ -15,7 +15,7 @@ import { onMessengerConnect, onMessengerClose } from "./messenger"
  * handling 'APPSTART' signal
  * this is the very first step of launch this entire service.
  */
-export const APP_START_HANDER = async () => {
+export const APP_START_HANDLER = async () => {
 
     // check redis credentials for cache and messenger and message queue
     if (!process.env.REDIS_URL || !process.env.REDIS_PORT || !process.env.REDIS_PASSWORD) {

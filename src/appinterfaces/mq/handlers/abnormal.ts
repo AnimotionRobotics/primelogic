@@ -2,7 +2,7 @@
  * All Abnormal Situation should be Handled by functions here
  */
 import type { JobMessage } from "@modules/mq"
-import type { ServiceCallResul } from '@services'
+import type { ServiceCallResult } from '@services'
 
 
 
@@ -33,9 +33,9 @@ export const onGetMessageError = (e: string, streamKey: string, groupName: strin
 /**
  * Job Message imperfect
  */
-export const onMaxRetryReached = async (job: JobMessage): ServiceCallResult => {
+export const onMaxRetryReached = async (job: JobMessage): Promise<ServiceCallResult> => {
 
-    // TODO - how to deal with this siutation? Push to DLQ
+    // TODO - how to deal with this situation? Push to DLQ
 
 
     return { err: false, ack: true }

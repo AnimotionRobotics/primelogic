@@ -4,11 +4,11 @@
  * 2. ...
  */
 import { getHashAllFields } from '@modules/cache'
-import type { HandlerType } from '@commontypes/handlerType'
+import type { HandlerResult } from '@commontypes/handlerType'
 
 
 
-export const addFileToTask = async (config): Promise<handlerType> => {
+export const addFileToTask = async (config): Promise<HandlerResult> => {
 
     const configObj = JSON.parse(config)
     console.log('configObj: ', configObj)
@@ -52,13 +52,13 @@ export const addFileToTask = async (config): Promise<handlerType> => {
     // get file id, file detail, user detail, selected project | task detail
 
 
-    // download file, and upload to object storage serivce, and get file url
+    // download file, and upload to object storage service, and get file url
 
 
     // store to DB as task entity
 
 
     // return result in msg for message queue level script to response back to producer
-    return { res: 'success', msg: `succesfully added file to ${workEntities.length} tasks` }
+    return { res: 'success', msg: `successfully added file to ${workEntities.length} tasks` }
 
 }
