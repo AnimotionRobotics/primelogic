@@ -1,12 +1,22 @@
 /**
  * All Business Logics should be accomplished by calling modules or 3rd party APIs in here
  */
-import { addFileToTask } from './task';
+import { addFileToTask } from './task'
+import type { HandlerResult } from '@/commontypes/handlerType'
+import type { JobName, JobPayload } from '@/commontypes/messageType'
+import type { TaskOperationResponsePayload } from '@commontypes/taskType'
 export { addFileToTask }
 
-const serviceFunctions = { addFileToTask }
 
+type ServiceFunction = ( payload: JobPayload ) => Promise<HandlerResult>
 
+const serviceFunctions:Partial<Record<JobName, ServiceFunction>> = { addFileToTask }
+
+// const serviceFunctions = {
+//     addFileToTask?: ServiceFunction
+//     createTask?: ServiceFunction
+//     reviewTask?: ServiceFunction
+// }
 
 
 
@@ -28,37 +38,33 @@ export const onServiceFunctionFailure = (data: object) => {
  * Service Functions Router
  * @returns boolean telling message queue handler if the message is properly handled, letting it know should perform ack or nack
  */
-export type ServiceCallResult = { err: boolean, ack: boolean, msg?: string }
-export const serviceRoute = async (funcName: string, data: any): Promise<ServiceCallResult> => {
+export type ServiceCallResult = { err: boolean, ack: boolean, msg?: string, payload?: TaskOperationResponsePayload }
+export const serviceRoute = async (funcName: JobName, payload: JobPayload): Promise<ServiceCallResult> => {
 
 
     if (!funcName) throw 'MISSING_PARAMETER_FUNCNAME'
-    if (!data) throw 'MISSING_PARAMETER_DATA'
-    
-    // call actual service function according to funcName
-    let serviceResult
-    try {
-        serviceResult = await serviceFunctions[funcName](data)
-    } catch(e) {
-        console.log('\n', __filename, ' call serviceFunctions(), e: ', e)
-        // TODO - according to error message return true or false to let message queue handler ack or nack
-    }
-    
-    const { res, msg, next } = serviceResult
-    //
-    console.log('res, ', ' msg: ', msg, ' next: ', next)
+    if (!payload) throw 'MISSING_PARAMETER_PAYLOAD'
 
-    //
-    
+    const serviceFunction = serviceFunctions[funcName]
+
+    if (!serviceFunction) {
+        throw 'SERVICE_FUNCTION_NOT_FOUND'
+    }
+
+    // call actual service function according to funcName
+    const handlerResult = await serviceFunction(payload)
+
+    // retry + xnack ?
+    if (handlerResult.res === 'fail') {
+        return { err: true, ack: false, msg: handlerResult.msg }
+    }
 
     // for abnormal case, broadcast back to upstream services. and tell message queue handler to ack this message
-    if ( res === 'error' ) {
-        return { err: true, ack: true, msg }
+    if (handlerResult.res === 'error') {
+        return { err: true, ack: true, msg: handlerResult.msg }
     }
 
-
     // for accomplishment case, broadcase back to upstream service, and tell message queue handler to ack this message
-    return { err: false, ack: true, msg }
-
+    return { err: false, ack: true, msg: handlerResult.msg, payload: handlerResult.payload}
 
 }

@@ -1,15 +1,15 @@
-import type { 
+import type {
     AddFileToTaskPayload,
     CreateLeaveTaskPayload,
     ReviewTaskPayload,
-    TaskResponsePayload
+    TaskOperationResponsePayload
 } from '@commontypes/taskType';
 
 
-export type JobName = 'addFileToTask' | 'createTask' | 'reviewTask' 
+export type JobName = 'addFileToTask' | 'createTask' | 'reviewTask'
 
 
-export type JobPayload = AddFileToTaskPayload | CreateLeaveTaskPayload | ReviewTaskPayload 
+export type JobPayload = AddFileToTaskPayload | CreateLeaveTaskPayload | ReviewTaskPayload
 
 
 export type JobMessage = {
@@ -49,7 +49,7 @@ export type ResponseMessageBase = {
 export type ResponseMessage =
     ResponseMessageBase & {
         result: 'success',
-        payload: TaskResponsePayload,
+        payload: TaskOperationResponsePayload,
     }
 
     | ResponseMessageBase & {

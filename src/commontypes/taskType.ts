@@ -84,3 +84,11 @@ export type TaskResponsePayload = {
 
     reviewComment?: string
 }
+
+
+export type AddFileToTaskResponsePayload = {
+    fileId: string,
+    taskIds: string[]
+}
+
+export type TaskOperationResponsePayload = TaskResponsePayload | AddFileToTaskResponsePayload

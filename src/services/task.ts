@@ -10,9 +10,7 @@ import type { HandlerResult } from '@commontypes/handlerType'
 
 export const addFileToTask = async (config): Promise<HandlerResult> => {
 
-    const configObj = JSON.parse(config)
-    console.log('configObj: ', configObj)
-
+    const configObj = config
     // check if the selected items exist in database
     const metadata = JSON.parse(configObj.metadata)
     const userId = configObj.userId
@@ -25,13 +23,18 @@ export const addFileToTask = async (config): Promise<HandlerResult> => {
     let workEntities = []
     let notFound = []
     for (const item of selectedValues) {
-        let res 
+        let res
         try {
             res = await getHashAllFields(item)
         }catch(e){
             console.log('Error when getHashField(), e: ', e)
-            e === 'NO_RECORD_FOUND' ? notFound.push(item) : null
-            continue
+
+            if (e === 'NO_RECORD_FOUND') {
+                notFound.push(item)
+                continue
+            }
+
+            throw e
         }
         res ? workEntities.push(res) : null
     }
@@ -59,6 +62,5 @@ export const addFileToTask = async (config): Promise<HandlerResult> => {
 
 
     // return result in msg for message queue level script to response back to producer
-    return { res: 'success', msg: `successfully added file to ${workEntities.length} tasks` }
-
+    return { res: 'success',  msg: `successfully added file to ${workEntities.length} tasks`,   payload: { fileId, taskIds: selectedValues} }
 }
