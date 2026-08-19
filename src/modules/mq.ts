@@ -4,7 +4,7 @@
  * @date 5 June 2026
  */
 import { RedisClient } from 'bun'
-
+import type { ConsumedJobMessage, JobName, JobPayload } from '@/commontypes/messageType'
 
 export let allowConsuming: boolean = false
 export let messageQueueClient: RedisClient | null = null
@@ -20,8 +20,8 @@ export const listenQueueNamesArray = []
  * @throws  string  MISSING_CONNECTION_STRING
  * @throws  string  MISSING_HANDLERS_OBJECT
  * @throws  string  HANDLERS_MUST_BE_OBJECT
- * @throws  string  ON_CACHE_CONNECT_MUST_BE_FUNCTION
- * @throws  string  ON_CACHE_CLOSE_MUST_BE_FUNCTION
+ * @throws  string  ON_MESSAGEQUEUE_CONNECT_MUST_BE_FUNCTION
+ * @throws  string  ON_MESSAGEQUEUE_CLOSE_MUST_BE_FUNCTION
  * @throws  string  MESSAGEQUEUE_CONNECT_FAILED
  */
 export const connectMessageQueue = async (connString: string, handlers: { onMessageQueueConnect?: () => void, onMessageQueueClose?: (e: Error) => void }): Promise<RedisClient> => {
@@ -29,8 +29,8 @@ export const connectMessageQueue = async (connString: string, handlers: { onMess
    	if (!connString) throw 'MISSING_CONNECTION_STRING'
 	if (!handlers) throw 'MISSING_HANDLERS_OBJECT'
 	if (typeof handlers !== 'object') throw 'HANDLERS_MUST_BE_OBJECT'
-	if (handlers.onMessageQueueConnect && typeof handlers.onMessageQueueConnect !== 'function') throw 'ON_CACHE_CONNECT_MUST_BE_FUNCTION'
-    if (handlers.onMessageQueueClose && typeof handlers.onMessageQueueClose !== 'function') throw 'ON_CACHE_CLOSE_MUST_BE_FUNCTION'
+	if (handlers.onMessageQueueConnect && typeof handlers.onMessageQueueConnect !== 'function') throw 'ON_MESSAGEQUEUE_CONNECT_MUST_BE_FUNCTION'
+    if (handlers.onMessageQueueClose && typeof handlers.onMessageQueueClose !== 'function') throw 'ON_MESSAGEQUEUE_CLOSE_MUST_BE_FUNCTION'
 
     messageQueueClient = new RedisClient(connString)
     // Attach event handlers
@@ -88,6 +88,7 @@ export const createStreamGroup = async (streamKey: string, consumerGroupName: st
 
     if (!streamKey) throw new Error('No stream name provided!')
     if (!consumerGroupName) throw new Error('No consumer group name provided!')
+    if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'
 
     // Check if consumer group already exists using XINFO GROUPS
     let groups
@@ -142,40 +143,41 @@ export const createStreamGroup = async (streamKey: string, consumerGroupName: st
 /**
  * Add Data to Message Queue
  */
-export type JobObject = { name: string, createdAt: number, retried: number, maxRetry: number, lastTryAt: number, payload: object }
-export const dispatchMessage = async (streamKey: string, jobId: any, client: RedisClient, jobMsg: string[]) => {
+export const dispatchMessage = async (responseStreamKey: string, responseId: string, cacheClient: RedisClient | null, responseMessageFields: string[]): Promise<void> => {
 
-    if (!streamKey) throw 'MISSING_PARAMETER_STREAMKEY'
-    if (!jobId) throw 'MISSING_PARAMETER_JOBID'
-    if (!client) throw 'MISSING_PARAMETER_CLIENT'
-    console.log(__filename, '\nstreamKey: ', streamKey, '\njobId: ',jobId)
-
-    // add jobId to store.
-    let res
-    try {
-        // res = await client.send('JSON.SET', ['jobs:'+jobId, '$', JSON.stringify(jobObj)])
-        res = await client.hmset('jobs:'+jobId, jobMsg)
-    } catch (e) {
-        console.error(e)
-        throw 'ERROR_SEND_JSON.SET'
+    if (!responseStreamKey) throw 'MISSING_PARAMETER_RESPONSE_STREAM_KEY'
+    if (!responseId) throw 'MISSING_PARAMETER_RESPONSE_ID'
+    if (!cacheClient) throw 'MISSING_PARAMETER_CACHE_CLIENT'
+    if (!Array.isArray(responseMessageFields)) {
+        throw 'RESPONSE_MESSAGE_FIELDS_MUST_BE_ARRAY'
+    }
+    if (responseMessageFields.length === 0 || responseMessageFields.length % 2 !== 0) {
+        throw 'INVALID_RESPONSE_MESSAGE_FIELDS'
     }
 
+    if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'
+
+    console.log('Dispatch response to mq: ', { responseStreamKey, responseId })
+
+    // add responseId to store.
+    try {
+        await cacheClient.hmset(`responses:${responseId}`, responseMessageFields)
+    } catch (e) {
+        throw 'FAILED_STORE_RESPONSE_MESSAGE'
+    }
 
     // add to message queue
     try {
         await messageQueueClient.send('XADD', [
-            streamKey,
+            responseStreamKey,
             "MAXLEN", "~", "10000", "*",
             "produced_time", Date.now().toString(),
-            "payload", jobId
+            "payload", responseId
         ])
     } catch (e) {
         console.error('Failed to dispatch to redis stream, e: ', e)
         throw 'FAILED_DISPATCH_MESSAGE'
     }
-
-    return
-
 }
 
 
@@ -189,20 +191,28 @@ export const dispatchMessage = async (streamKey: string, jobId: any, client: Red
  * @throws NO_MESSAGE_FOUND
  * @throws ERROR_WHEN_GETMESSAGE
  * @throws INVALID_MESSAGE_ID
+ * @throws INVALID_STREAM_ENTRY
+ * @throws INVALID_STREAM_MESSAGE_ID
+ * @throws INVALID_STREAM_FIELDS
+ * @throws INVALID_STREAM_FIELD
+ * @throws MISSING_JOB_ID
+ * @throws JOB_MESSAGE_NOT_FOUND
+ * @throws INVALID_JOB_NUMBER_FIELD
+ * @throws INVALID_JOB_CREATED_BY
+ * @throws INVALID_JOB_NAME
+ * @throws INVALID_JOB_PAYLOAD
  * @throws ERROR_GET_QUEUE_ITEM
  * @throws ERROR_WHEN_HGETALL_BY_KEY
  */
-export type JobMessage = {
-    id: string
-    name: string
-    createdAt: number
-    retried: number
-    maxRetry: number
-    lastTryAt: number
-    payload: any
-}
-export const getMessage = async (streamKey: string, config?: {groupName: string, consumerName: string}, blockTimeout: number = 1000): Promise<JobMessage> => {
 
+
+export type GetMessageError = {
+    code: string
+    streamMessageId: string
+    jobId?: string
+}
+
+export const getMessage = async (streamKey: string, config?: {groupName: string, consumerName: string, claimMinIdleTime: number}, blockTimeout: number = 1000): Promise<ConsumedJobMessage> => {
 
     let cmd = 'XREAD'
     let params = ['BLOCK', blockTimeout.toString(), 'COUNT', '1', 'STREAMS', streamKey, '0']
@@ -210,38 +220,133 @@ export const getMessage = async (streamKey: string, config?: {groupName: string,
     if (config && config.groupName && config.consumerName) {
         cmd = 'XREADGROUP'
         // Use '>' to read only new messages that were never delivered to any consumer
-        params = ['GROUP', config.groupName, config.consumerName, 'BLOCK', blockTimeout.toString(), 'COUNT', '1', 'STREAMS', streamKey, '>']
+        // CLAIM used for retry when nack
+        params = ['GROUP', config.groupName, config.consumerName,
+                'BLOCK', blockTimeout.toString(),
+                'COUNT', '1',
+                'CLAIM', config.claimMinIdleTime.toString(),
+                'STREAMS', streamKey,
+                '>']
     }
 
     // console.log('cmd: ', cmd, ' params: ', params)
     if (!allowConsuming) throw 'CONSUME_NOT_ALLOWED'
 
+    if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'
+
     let response
     try {
-        // by sending 'XREAD', 'XREADGROUP', the message is added to Pending Entry List (PEL) with delivery count +1
+        // XREADGROUP, the message is added to Pending Entry List (PEL) with delivery count +1
+        //  XREAD does not use a consumer-group PEL
         response = await messageQueueClient.send(cmd, params)
     } catch (e) {
-        console.error('Error when XREAD, e: ', e)
         throw 'ERROR_WHEN_GETMESSAGE'
     }
 
-    // console.log(__filename, '\ngetMessage(), response: ', response)
     if (!response) throw 'NO_MESSAGE_FOUND'
-    if (!response || !response[streamKey] || !response[streamKey][0] || !response[streamKey][0][0]) throw 'INVALID_MESSAGE_ID'
-    if (!response || !response[streamKey] || !response[streamKey][0] || !response[streamKey][0][1] || !response[streamKey][0][1][3]) throw 'ERROR_GET_QUEUE_ITEM'
 
-    let jobMsg
-    try {
-        jobMsg = await messageQueueClient.hgetall('jobs:'+response[streamKey][0][1][3])
-    } catch (e) {
-        console.error('Error when hgetall(), e:\n', e)
-        throw 'ERROR_WHEN_HGETALL_BY_KEY'
+    // { "job-queue:jobs:kaidi": [
+    //     [ "1786427859403-0", [ "produced_time", "1786427858387", "payload", "7416350627799220233" ] ]
+    //   ],
+    // }
+
+    const streamEntry = response[streamKey]?.[0]
+
+    if (!streamEntry || !Array.isArray(streamEntry)) throw 'INVALID_STREAM_ENTRY'
+
+    const streamMessageId = streamEntry[0]
+    const streamFields = streamEntry[1]
+
+    if (typeof streamMessageId !== 'string') throw 'INVALID_STREAM_MESSAGE_ID'
+
+    if (!Array.isArray(streamFields) || streamFields.length % 2 !== 0) {
+        const error: GetMessageError = { code: 'INVALID_STREAM_FIELDS', streamMessageId}
+        throw error
     }
-    // console.log(__filename, '\ngetMessage(), jobMsg: ', jobMsg)
 
+    const streamFieldMap: Record<string, string> = {}
 
-    return { id: response[streamKey][0][0], ...jobMsg}
+    for (let index = 0; index < streamFields.length; index += 2) {
+        const fieldName = streamFields[index]
+        const fieldValue = streamFields[index + 1]
 
+        if (typeof fieldName !== 'string' || typeof fieldValue !== 'string') {
+            const error: GetMessageError = { code: 'INVALID_STREAM_FIELD', streamMessageId}
+            throw error
+        }
+
+        streamFieldMap[fieldName] = fieldValue
+    }
+
+    const jobId = streamFieldMap.payload
+
+    if (!jobId) {
+        const error: GetMessageError = { code: 'MISSING_JOB_ID', streamMessageId}
+        throw error
+    }
+
+    let jobFields: Record<string, string>
+    try {
+        jobFields = await messageQueueClient.hgetall(`jobs:${jobId}`)
+    } catch (e) {
+        const error: GetMessageError = { code: 'ERROR_WHEN_HGETALL_BY_KEY', streamMessageId, jobId}
+        throw error
+    }
+
+    if (Object.keys(jobFields).length === 0) {
+        const error: GetMessageError = { code: 'JOB_MESSAGE_NOT_FOUND', streamMessageId, jobId}
+        throw error
+    }
+
+    const createdAt = Number(jobFields.createdAt)
+    const retried = Number(jobFields.retried)
+    const maxRetry = Number(jobFields.maxRetry)
+    const lastTriedAt = Number(jobFields.lastTriedAt)
+
+    if (!Number.isFinite(createdAt) || !Number.isFinite(retried) || !Number.isFinite(maxRetry) || !Number.isFinite(lastTriedAt)) {
+        const error: GetMessageError = { code: 'INVALID_JOB_NUMBER_FIELD', streamMessageId, jobId}
+        throw error
+    }
+
+    const createdBy = jobFields.createdBy
+
+    if (typeof createdBy !== 'string' || createdBy.trim().length === 0) {
+        const error: GetMessageError = { code: 'INVALID_JOB_CREATED_BY', streamMessageId,jobId}
+        throw error
+    }
+
+    const supportedJobNames: JobName[] = ['addFileToTask', 'createTask', 'reviewTask']
+
+    if (!supportedJobNames.includes(jobFields.name as JobName)) {
+        const error: GetMessageError = { code: 'INVALID_JOB_NAME', streamMessageId, jobId}
+        throw error
+    }
+
+    let payload: JobPayload
+
+    try {
+        payload = JSON.parse(jobFields.payload) as JobPayload
+    } catch (e) {
+        const error: GetMessageError = { code: 'INVALID_JOB_PAYLOAD', streamMessageId, jobId}
+        throw error
+    }
+
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        const error: GetMessageError = { code: 'INVALID_JOB_PAYLOAD', streamMessageId, jobId}
+        throw error
+    }
+
+    return {
+        streamMessageId,
+        jobId,
+        name: jobFields.name as JobName,
+        createdAt,
+        createdBy,
+        retried,
+        maxRetry,
+        lastTriedAt,
+        payload
+    }
 }
 
 
@@ -250,8 +355,9 @@ export const getMessage = async (streamKey: string, config?: {groupName: string,
 /**
  * Acknowledge Message in Consumer Group
  */
-export const ackMessage = async (streamKey: string, groupName: string, messageId: string, del?: boolean) => {
+export const ackMessage = async (streamKey: string, groupName: string, messageId: string, del?: boolean) : Promise<number> => {
 
+    if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'
     if (!streamKey) throw 'MISSING_PARAMETER_STREAM_KEY'
     if (!groupName) throw 'MISSING_PARAMETER_GROUP_NAME'
     if (!messageId) throw 'MISSING_PARAMETER_MESSAGE_ID'
@@ -287,12 +393,13 @@ export const nAckMessage = async (streamKey: string, groupName: string, mode: 'S
 
     if (!streamKey) throw 'MISSING_PARAMETER_STREAMKEY'
     if (!groupName) throw 'MISSING_PARAMETER_GROUPNAME'
-    if (!messageIds) throw 'MISSING_PARAMETER_MESSAGEIDS'
+    if (!messageIds||!Array.isArray(messageIds) || messageIds.length === 0) throw 'MISSING_PARAMETER_MESSAGEIDS'
+    if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'
 
     try {
         await messageQueueClient.send('XNACK', [streamKey, groupName, mode, 'IDS', messageIds.length.toString(), ...messageIds])
     } catch (e) {
-        throw e
+        throw 'ERROR_NACK_MESSAGE'
     }
 
     return true
@@ -309,6 +416,7 @@ export const delMessage = async (key:string, id:string) => {
 
     if (!key) throw 'MISSING_PARAMETER_KEY'
     if (!id) throw 'MISSING_PARAMETER_ID'
+    if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'
 
     console.log(__filename, '\nkey: ', key, '   id: ', id)
 
@@ -331,4 +439,38 @@ export const setAllowConsume = async (allow: boolean) => {
 
     allowConsuming = allow
 
+}
+
+
+export type DeadLetterMessage = {
+    sourceStreamKey: string
+    sourceStreamMessageId: string
+    sourceJobId?: string
+    errorCode: string
+    createdAt: number
+}
+// for DLQ or simple stream append
+export const appendStreamMessage = async (streamKey: string, fields: string[]): Promise<string> => {
+    if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'
+    if (!streamKey) throw 'MISSING_PARAMETER_STREAMKEY'
+    if (!fields || fields.length === 0) throw 'MISSING_PARAMETER_FIELDS'
+    if (fields.length % 2 !== 0) throw 'INVALID_STREAM_FIELDS'
+
+    let streamMessageId: string
+    try {
+        streamMessageId = await messageQueueClient.send('XADD', [
+            streamKey,
+            'MAXLEN', '~', '10000',
+            '*',
+            ...fields
+        ])
+    } catch (e) {
+        throw 'FAILED_APPEND_STREAM_MESSAGE'
+    }
+
+    if (typeof streamMessageId !== 'string') {
+        throw 'INVALID_STREAM_MESSAGE_ID'
+    }
+
+    return streamMessageId
 }

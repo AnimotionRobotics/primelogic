@@ -58,15 +58,28 @@ export const APP_START_HANDLER = async () => {
     try {
         await initMessageQueue(redisConnectionString, {targetStreamKey: process.env.MQ_TARGET_STREAM_KEY, targetStreamConsumerGroup: process.env.MQ_TARGET_STREAM_CONSUMER_GROUP, listenStreamKey: process.env.MQ_LISTEN_STREAM_KEY, listenStreamConsumerGroup: process.env.MQ_LISTEN_STREAM_CONSUMER_GROUP})
     } catch (e) {
-        console.error('Failed connect to message queue', e)
+        console.error('Failed to initialize message queue', e)
         process.exit(1)
     }
     console.timeEnd('messagequeue')
 
 
     // start listening and set consumer of message queue
+    if (!process.env.MQ_CLAIM_MIN_IDLE_MS || !process.env.MQ_DLQ_STREAM_KEY) {
+        process.emit('APPERROR', { err: 'CRITICAL', msg: 'MQ_CLAIM_MIN_IDLE_MS or MQ_DLQ_STREAM_KEY not set' })
+        process.exit(1)
+    }
+
+    const claimMinIdleTime = Number(process.env.MQ_CLAIM_MIN_IDLE_MS)
+
+    if (!Number.isInteger(claimMinIdleTime) || claimMinIdleTime <= 0) {
+        process.emit('APPERROR', { err: 'CRITICAL', msg: 'MQ_CLAIM_MIN_IDLE_MS must be a positive integer' })
+        process.exit(1)
+    }
+
     try {
-        await initConsumingMessageQueue(process.env.MQ_LISTEN_STREAM_KEY, process.env.MQ_LISTEN_STREAM_CONSUMER_GROUP, 'slack-msg-consumer-01')
+        await initConsumingMessageQueue(process.env.MQ_LISTEN_STREAM_KEY, process.env.MQ_LISTEN_STREAM_CONSUMER_GROUP, 'slack-msg-consumer-01',
+                                        claimMinIdleTime, process.env.MQ_TARGET_STREAM_KEY, process.env.MQ_DLQ_STREAM_KEY)
     } catch (e) {
         console.error('initConsumingMessageQueue(), e: ', e)
         process.exit(1)

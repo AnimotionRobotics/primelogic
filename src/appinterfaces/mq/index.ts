@@ -2,14 +2,13 @@
  * App Interface: Message Queue
  * Receiving messages from message queue, processing messages with business logic by calling respective handlers
  */
-import type { JobMessage } from "@modules/mq"
-import { ackMessage, connectMessageQueue, disconnectMessageQueue, nAckMessage } from "@modules/mq"
+import type { ConsumedJobMessage, ResponseMessage } from "@/commontypes/messageType"
+import { ackMessage, connectMessageQueue, disconnectMessageQueue, dispatchMessage, nAckMessage } from "@modules/mq"
 import { createStreamGroup } from '@modules/mq'
-import { allowConsuming, setAllowConsume, getMessage, delMessage } from '@modules/mq'
-// import { publishMessage } from '@modules/messenger'
-import { onMessageQueueConnect, onMessageQueueClose, onJobMsgNameMissing, onMaxRetryReached,onGetMessageError } from "./handlers"
-import { serviceRoute, onServiceFunctionFailure, type ServiceCallResult } from '@services'
-
+import { allowConsuming, setAllowConsume, getMessage, appendStreamMessage } from '@modules/mq'
+import { cacheClient, incrementHashField, setHash } from '@modules/cache'
+import { onMessageQueueConnect, onMessageQueueClose, onGetMessageError } from "./handlers"
+import { serviceRoute, type ServiceCallResult } from '@services'
 
 
 
@@ -29,8 +28,8 @@ export const initMessageQueue = async (redisConnectionString: string, config: {t
         setAllowConsume(true)
         // console.log('set setAllowConsume', true)
     } catch (e) {
-        console.error('Failed connect to message queue')
-        process.exit(1)
+        console.error('Failed connect to message queue: ', e)
+        throw e
     }
 
 
@@ -44,9 +43,8 @@ export const initMessageQueue = async (redisConnectionString: string, config: {t
         } else {
             console.error('Error when createStreamGroup()', e)
         }
+        throw e
     }
-
-
 
 }
 
@@ -57,73 +55,247 @@ export const initMessageQueue = async (redisConnectionString: string, config: {t
  * Start Consuming Message Queue
  * Since it is using blocking listening, this process should be the last one of Initialize process in top level script
  */
-export const initConsumingMessageQueue = async (streamKey: string, groupName: string, consumerName: string) => {
-
+export const initConsumingMessageQueue = async (streamKey: string, groupName: string, consumerName: string, claimMinIdleTime: number, responseStreamKey: string, dlqStreamKey: string) => {
 
     console.log('Now listening message queue: ', streamKey)
+
     while (allowConsuming) {
-
         // step 1: get queued message
-        let msgResult: JobMessage
+        let msgResult: ConsumedJobMessage
         try {
-            msgResult = await getMessage(streamKey, { groupName, consumerName }, 5000)
-            // msgResult ? console.log(__filename, '\ngetMessage(), msgResult: ', msgResult) : null
-        } catch (e) {
-            // if (!allowConsuming) break
+            msgResult = await getMessage(streamKey, { groupName, consumerName, claimMinIdleTime }, 5000)
+        } catch (e: unknown) {
             if (e === 'CONSUME_NOT_ALLOWED') break
+            // Normal timeout: no new message within 5 seconds
             if (e === 'NO_MESSAGE_FOUND') continue
-            // if this error is critical, entire loop should be terminated (break)
-            if (onGetMessageError(e, streamKey, groupName, consumerName)) break
+
+            const canPushToDlq = onGetMessageError(e, streamKey, groupName, consumerName)
+
+            // Throw critical errors for apphandlers to handle.
+            if (!canPushToDlq) throw e
+
+            // push to DLQ and ack message
+            const deadLetterFields = [
+                'sourceStreamKey', streamKey,
+                'sourceStreamMessageId', e.streamMessageId,
+                'errorCode', e.code,
+                'createdAt', Date.now().toString()
+            ]
+
+            if (e.jobId) {
+                deadLetterFields.push('sourceJobId', e.jobId)
+            }
+
+            try {
+                await appendStreamMessage(dlqStreamKey, deadLetterFields)
+            } catch (dlqError) {
+                console.error('Failed to move message to DLQ when get error message: ', { error: dlqError, streamMessageId: e.streamMessageId })
+                throw dlqError
+            }
+
+            console.warn('Moved message to DLQ when get error message: ', { streamMessageId: e.streamMessageId })
+
+            try {
+                const ackCount = await ackMessage(streamKey, groupName, e.streamMessageId)
+                if (ackCount !== 1) {
+                    throw 'FAILED_ACK_DEAD_LETTER_MESSAGE'
+                }
+            } catch (ackError) {
+                console.error('Failed to ack message after DLQ append: ', { error: ackError, streamMessageId: e.streamMessageId })
+                throw ackError
+            }
+
             continue
         }
 
-        // console.log(__filename, '\ngetMessage(), msgResult: ', msgResult)
+        console.info('Received message from mq: ', { streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId, name: msgResult.name })
 
+        // step 2: call service
+        let serviceResult: ServiceCallResult
 
+        if (msgResult.retried >= msgResult.maxRetry) {
+            // push to DLQ and ack message
+            const deadLetterFields = [
+                'sourceStreamKey', streamKey,
+                'sourceStreamMessageId', msgResult.streamMessageId,
+                'sourceJobId', msgResult.jobId,
+                'errorCode', 'MAX_RETRY_REACHED',
+                'createdAt', Date.now().toString()
+            ]
 
-        // step 2: call handler
-        // only one item in jsonResult is acceptble and valid for continue
-        let serviceResult: ServiceCallResult 
+            try {
+                await appendStreamMessage(dlqStreamKey, deadLetterFields)
+            } catch (dlqError) {
+                console.error('Failed to move message to DLQ: ', { error: dlqError, streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId })
+                throw dlqError
+            }
+
+            console.warn('Moved message to DLQ when call service retry reached maxRetry: ', { streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId })
+
+            try {
+                const ackCount = await ackMessage(streamKey, groupName, msgResult.streamMessageId)
+                if (ackCount !== 1) {
+                    throw 'FAILED_ACK_DEAD_LETTER_MESSAGE'
+                }
+            } catch (ackError) {
+                console.error('Failed to ack message after DLQ append: ', { error: ackError, streamMessageId: msgResult.streamMessageId })
+                throw ackError
+            }
+
+            continue
+        }
+
         try {
-            !msgResult.name ? serviceResult = onJobMsgNameMissing(msgResult) : null
-            // retried should less than maxRetry , otherwise push to DLQ
-            msgResult.name && msgResult.retried < msgResult.maxRetry ? 
-                serviceResult = await serviceRoute(msgResult.name, msgResult.payload) : 
-                serviceResult = await onMaxRetryReached(msgResult)
-        } catch (e) {
-            console.log('handler emit error, e: ', e)
-            // Only serviceFunctions throw Error msg here, for the last error handling function.
-            onServiceFunctionFailure(msgResult.payload)
-            // TODO - e ? onServiceFunctionFailure() : otherFailure()
-            // TODO - add handler (otherFailure()) for error emit from onJobMsgNameMissing(), onMaxRetryReached()
-
-            // NACK
-            nAckMessage(streamKey, groupName, 'SILENT', [msgResult.id])
-            continue
+            serviceResult = await serviceRoute(msgResult.name, msgResult.payload)
+        } catch (serviceError) {
+            console.error('Service execution failed: ', { error: serviceError, streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId, name: msgResult.name })
+            serviceResult = { err: true, ack: false, msg: 'SERVICE_FUNCTION_FAILED'}
         }
 
+        if (!serviceResult.ack) {
+            try {
+                // retried + 1
+                const retried = await incrementHashField(`jobs:${msgResult.jobId}`, 'retried')
+                // update lastTriedAt
+                await setHash(`jobs:${msgResult.jobId}`, { lastTriedAt: Date.now().toString() })
+                // XNACK
+                await nAckMessage(streamKey, groupName, 'FAIL', [msgResult.streamMessageId])
+                console.warn('Message released for retry: ', { streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId, retried, maxRetry: msgResult.maxRetry })
+            } catch (e) {
+                console.error('Failed to prepare message retry', { e, streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId })
+                throw e
+            }
+            continue
+        }
 
         // step 3: push result back to message queue
-        try {
-            await dispathMessage('job-response:'+msgResult.createdBy, msgResult.id, cacheClient, serviceResult.msg)
-        }catch(e){
-            // TODO - dispathMessage failure, should retry or push to DLQ
+        const responseCreatedAt = Date.now()
+        const responseId = Bun.hash(`response:${msgResult.jobId}`).toString()
+        const responseMessageBase = {
+            requestJobId: msgResult.jobId,
+            name: msgResult.name,
+            createdAt: responseCreatedAt,
+            createdBy: groupName,
+            retried: 0,
+            maxRetry: msgResult.maxRetry,
+            lastTriedAt: responseCreatedAt
         }
 
-        
+        let responseMessage: ResponseMessage
+        if (serviceResult.err) {
+            const errorCode = serviceResult.msg ?? 'SERVICE_ERROR'
+            responseMessage = {
+                ...responseMessageBase,
+                result: 'error',
+                error: {
+                    code: errorCode,
+                    message: errorCode
+                }
+            }
+        } else {
+            if (!serviceResult.payload) {
+                throw 'MISSING_SERVICE_RESPONSE_PAYLOAD'
+            }
+            responseMessage = {
+                ...responseMessageBase,
+                result: 'success',
+                payload: serviceResult.payload
+            }
+        }
 
-        // step 4: Acknowlege Message which has been processed according to result
-        serviceResult.ack ? await ackMessage(streamKey, groupName, msgResult.id) : null
-        // TODO - what if ackMessage error ?
+        let dispatchSucceeded = false
+        let dispatchRetryCount = 0
+        let lastDispatchError: unknown = null
 
+        while (dispatchRetryCount <= responseMessage.maxRetry) {
+            const responseMessageFields = [
+                'requestJobId', responseMessage.requestJobId,
+                'name', responseMessage.name,
+                'createdAt', responseMessage.createdAt.toString(),
+                'createdBy', responseMessage.createdBy,
+                'retried', dispatchRetryCount.toString(),
+                'maxRetry', responseMessage.maxRetry.toString(),
+                'lastTriedAt', Date.now().toString(),
+                'result', responseMessage.result
+            ]
 
+            if (responseMessage.result === 'success') {
+                responseMessageFields.push('payload', JSON.stringify(responseMessage.payload))
+            } else {
+                responseMessageFields.push('error', JSON.stringify(responseMessage.error))
+            }
 
+            try {
+                await dispatchMessage(responseStreamKey, responseId, cacheClient, responseMessageFields)
+                dispatchSucceeded = true
+                console.info('Response dispatched successfully: ', { responseId, requestJobId: msgResult.jobId, retryCount: dispatchRetryCount})
+                break
+            }catch(dispatchError){
+                lastDispatchError = dispatchError
+                console.error('Response dispatch attempt failed: ', {
+                    error: dispatchError,
+                    responseId,
+                    requestJobId: msgResult.jobId,
+                    retryCount: dispatchRetryCount,
+                    maxRetry: responseMessage.maxRetry
+                })
 
+                if (dispatchRetryCount >= responseMessage.maxRetry) break
+
+                dispatchRetryCount += 1
+                await Bun.sleep(500 * dispatchRetryCount)
+            }
+        }
+        // Failed to dispatch message and retry reached maxRetry, push to DLQ
+        if (!dispatchSucceeded) {
+            const deadLetterFields = [
+                'sourceStreamKey', streamKey,
+                'sourceStreamMessageId', msgResult.streamMessageId,
+                'sourceJobId', msgResult.jobId,
+                'errorCode', String(lastDispatchError ?? 'RESPONSE_DISPATCH_MAX_RETRY_REACHED'),
+                'createdAt', Date.now().toString()
+            ]
+
+            try {
+                await appendStreamMessage(dlqStreamKey, deadLetterFields)
+            } catch (dlqError) {
+                console.error('Failed to move response dispatch failure to DLQ: ', {
+                    error: dlqError,
+                    responseId,
+                    requestJobId: msgResult.jobId,
+                    sourceStreamMessageId: msgResult.streamMessageId
+                })
+                throw dlqError
+            }
+        }
+
+        // step 4: Acknowledge Message which has been processed according to result
+        const ackReason = dispatchSucceeded? 'RESPONSE_DISPATCHED': 'RESPONSE_MOVED_TO_DLQ'
+        try {
+            const ackCount = await ackMessage(streamKey, groupName, msgResult.streamMessageId)
+
+            if (ackCount !== 1) {
+                throw 'FAILED_ACK_SOURCE_MESSAGE'
+            }
+
+            console.info('Source message acked: ', {
+                sourceStreamMessageId: msgResult.streamMessageId,
+                requestJobId: msgResult.jobId,
+                responseId,
+                ackReason
+            })
+        } catch (ackError) {
+            console.error('Failed to ack source message: ', {
+                error: ackError,
+                sourceStreamMessageId: msgResult.streamMessageId,
+                requestJobId: msgResult.jobId,
+                responseId,
+                ackReason
+            })
+            throw ackError
+        }
     }
-
 
     // finished while loop, should indicate explicitly
     console.log('Stopped listening message queue: ', streamKey)
-
-
 }

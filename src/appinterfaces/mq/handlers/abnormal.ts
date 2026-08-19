@@ -1,30 +1,32 @@
 /**
  * All Abnormal Situation should be Handled by functions here
  */
-import type { JobMessage } from "@modules/mq"
+import type { ConsumedJobMessage } from '@/commontypes/messageType'
 import type { ServiceCallResult } from '@services'
+import type { GetMessageError } from '@/modules/mq'
 
-
+const dlqGetMessageErrorCodes: string[] = [
+    'INVALID_STREAM_FIELDS',
+    'INVALID_STREAM_FIELD',
+    'MISSING_JOB_ID',
+    'JOB_MESSAGE_NOT_FOUND',
+    'INVALID_JOB_NUMBER_FIELD',
+    'INVALID_JOB_CREATED_BY',
+    'INVALID_JOB_NAME',
+    'INVALID_JOB_PAYLOAD'
+]
 
 
 /**
  * Handler for failure situation of getting message from redis stream
- * @returns boolean: is critical or not
  */
-export const onGetMessageError = (e: string, streamKey: string, groupName: string, consumerName): boolean => {
+export const onGetMessageError = (error: unknown, streamKey: string, groupName: string, consumerName: string): error is GetMessageError => {
 
-    let isCritical = false
+    // identify whether the error can be handled by DLQ, other errors are considered as critical
+    const canPushToDlq = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' &&
+        'streamMessageId' in error && typeof error.streamMessageId === 'string' && dlqGetMessageErrorCodes.includes(error.code)
 
-    // TODO - didn't get message, log this incident
-    // possible value of e:
-    // ERROR_WHEN_GETMESSAGE
-    // INVALID_MESSAGE_ID
-    // ERROR_GET_QUEUE_ITEM
-    // ERROR_WHEN_HGETALL_BY_KEY
-
-    console.error('Error getting message:', e)
-
-    return isCritical
+    return canPushToDlq
 }
 
 
@@ -33,7 +35,7 @@ export const onGetMessageError = (e: string, streamKey: string, groupName: strin
 /**
  * Job Message imperfect
  */
-export const onMaxRetryReached = async (job: JobMessage): Promise<ServiceCallResult> => {
+export const onMaxRetryReached = async (job: ConsumedJobMessage): Promise<ServiceCallResult> => {
 
     // TODO - how to deal with this situation? Push to DLQ
 
