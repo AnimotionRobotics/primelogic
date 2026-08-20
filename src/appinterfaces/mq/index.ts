@@ -2,12 +2,13 @@
  * App Interface: Message Queue
  * Receiving messages from message queue, processing messages with business logic by calling respective handlers
  */
-import type { ConsumedJobMessage, ResponseMessage } from "@/commontypes/messageType"
+import type { ConsumedJobMessage, ResponseMessage } from "@commontypes/messageType"
 import { ackMessage, connectMessageQueue, disconnectMessageQueue, dispatchMessage, nAckMessage } from "@modules/mq"
 import { createStreamGroup } from '@modules/mq'
-import { allowConsuming, setAllowConsume, getMessage, appendStreamMessage } from '@modules/mq'
+import { allowConsuming, setAllowConsume, getMessage } from '@modules/mq'
 import { cacheClient, incrementHashField, setHash } from '@modules/cache'
 import { onMessageQueueConnect, onMessageQueueClose, onGetMessageError } from "./handlers"
+import { moveToDlqAndAckSourceMessage } from "./handlers/deadletters"
 import { serviceRoute, type ServiceCallResult } from '@services'
 
 
@@ -73,74 +74,35 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
 
             // Throw critical errors for apphandlers to handle.
             if (!canPushToDlq) throw e
-
-            // push to DLQ and ack message
-            const deadLetterFields = [
-                'sourceStreamKey', streamKey,
-                'sourceStreamMessageId', e.streamMessageId,
-                'errorCode', e.code,
-                'createdAt', Date.now().toString()
-            ]
-
-            if (e.jobId) {
-                deadLetterFields.push('sourceJobId', e.jobId)
-            }
-
-            try {
-                await appendStreamMessage(dlqStreamKey, deadLetterFields)
-            } catch (dlqError) {
-                console.error('Failed to move message to DLQ when get error message: ', { error: dlqError, streamMessageId: e.streamMessageId })
-                throw dlqError
-            }
-
-            console.warn('Moved message to DLQ when get error message: ', { streamMessageId: e.streamMessageId })
-
-            try {
-                const ackCount = await ackMessage(streamKey, groupName, e.streamMessageId)
-                if (ackCount !== 1) {
-                    throw 'FAILED_ACK_DEAD_LETTER_MESSAGE'
-                }
-            } catch (ackError) {
-                console.error('Failed to ack message after DLQ append: ', { error: ackError, streamMessageId: e.streamMessageId })
-                throw ackError
-            }
+            // Push invalid message to DLQ and ack
+            await moveToDlqAndAckSourceMessage({
+                dlqStreamKey,
+                sourceStreamKey: streamKey,
+                sourceGroupName: groupName,
+                sourceStreamMessageId: e.streamMessageId,
+                sourceJobId: e.jobId,
+                errorCode: e.code
+            })
 
             continue
         }
 
         console.info('Received message from mq: ', { streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId, name: msgResult.name })
 
+
         // step 2: call service
         let serviceResult: ServiceCallResult
 
         if (msgResult.retried >= msgResult.maxRetry) {
-            // push to DLQ and ack message
-            const deadLetterFields = [
-                'sourceStreamKey', streamKey,
-                'sourceStreamMessageId', msgResult.streamMessageId,
-                'sourceJobId', msgResult.jobId,
-                'errorCode', 'MAX_RETRY_REACHED',
-                'createdAt', Date.now().toString()
-            ]
-
-            try {
-                await appendStreamMessage(dlqStreamKey, deadLetterFields)
-            } catch (dlqError) {
-                console.error('Failed to move message to DLQ: ', { error: dlqError, streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId })
-                throw dlqError
-            }
-
-            console.warn('Moved message to DLQ when call service retry reached maxRetry: ', { streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId })
-
-            try {
-                const ackCount = await ackMessage(streamKey, groupName, msgResult.streamMessageId)
-                if (ackCount !== 1) {
-                    throw 'FAILED_ACK_DEAD_LETTER_MESSAGE'
-                }
-            } catch (ackError) {
-                console.error('Failed to ack message after DLQ append: ', { error: ackError, streamMessageId: msgResult.streamMessageId })
-                throw ackError
-            }
+            // Push to DLQ and ack message
+            await moveToDlqAndAckSourceMessage({
+                dlqStreamKey,
+                sourceStreamKey: streamKey,
+                sourceGroupName: groupName,
+                sourceStreamMessageId: msgResult.streamMessageId,
+                sourceJobId: msgResult.jobId,
+                errorCode: 'MAX_RETRY_REACHED'
+            })
 
             continue
         }
@@ -167,6 +129,7 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
             }
             continue
         }
+
 
         // step 3: push result back to message queue
         const responseCreatedAt = Date.now()
@@ -246,31 +209,23 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
                 await Bun.sleep(500 * dispatchRetryCount)
             }
         }
-        // Failed to dispatch message and retry reached maxRetry, push to DLQ
-        if (!dispatchSucceeded) {
-            const deadLetterFields = [
-                'sourceStreamKey', streamKey,
-                'sourceStreamMessageId', msgResult.streamMessageId,
-                'sourceJobId', msgResult.jobId,
-                'errorCode', String(lastDispatchError ?? 'RESPONSE_DISPATCH_MAX_RETRY_REACHED'),
-                'createdAt', Date.now().toString()
-            ]
 
-            try {
-                await appendStreamMessage(dlqStreamKey, deadLetterFields)
-            } catch (dlqError) {
-                console.error('Failed to move response dispatch failure to DLQ: ', {
-                    error: dlqError,
-                    responseId,
-                    requestJobId: msgResult.jobId,
-                    sourceStreamMessageId: msgResult.streamMessageId
-                })
-                throw dlqError
-            }
+        // Failed to dispatch message and retry reached maxRetry, push to DLQ and ack
+        if (!dispatchSucceeded) {
+            await moveToDlqAndAckSourceMessage({
+                dlqStreamKey,
+                sourceStreamKey: streamKey,
+                sourceGroupName: groupName,
+                sourceStreamMessageId: msgResult.streamMessageId,
+                sourceJobId: msgResult.jobId,
+                errorCode: typeof lastDispatchError === 'string' ? lastDispatchError : 'RESPONSE_DISPATCH_MAX_RETRY_REACHED'
+            })
+
+            continue
         }
 
-        // step 4: Acknowledge Message which has been processed according to result
-        const ackReason = dispatchSucceeded? 'RESPONSE_DISPATCHED': 'RESPONSE_MOVED_TO_DLQ'
+
+        // step 4: Acknowledge Message which has been dispatched
         try {
             const ackCount = await ackMessage(streamKey, groupName, msgResult.streamMessageId)
 
@@ -281,16 +236,14 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
             console.info('Source message acked: ', {
                 sourceStreamMessageId: msgResult.streamMessageId,
                 requestJobId: msgResult.jobId,
-                responseId,
-                ackReason
+                responseId
             })
         } catch (ackError) {
             console.error('Failed to ack source message: ', {
                 error: ackError,
                 sourceStreamMessageId: msgResult.streamMessageId,
                 requestJobId: msgResult.jobId,
-                responseId,
-                ackReason
+                responseId
             })
             throw ackError
         }
