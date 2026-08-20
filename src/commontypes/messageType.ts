@@ -28,12 +28,6 @@ export type ConsumedJobMessage = JobMessage & {
     jobId: string,
 }
 
-
-export type ResponseError = {
-    code: string,
-    message: string
-}
-
 export type ResponseName = 'taskCreated'| 'taskApproved' | 'taskRejected'| 'taskOperationFailed' | 'fileAddedToTask'
 
 export type ResponseMessageBase = {
@@ -43,7 +37,8 @@ export type ResponseMessageBase = {
     createdBy: string,
     retried: number,
     maxRetry: number,
-    lastTriedAt: number
+    lastTriedAt: number,
+    msg: string
 }
 
 
@@ -54,8 +49,7 @@ export type ResponseMessage =
     }
 
     | ResponseMessageBase & {
-        result: 'error',
-        error: ResponseError
+        result: 'error'
     }
 
 

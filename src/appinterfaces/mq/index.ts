@@ -87,7 +87,13 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
             continue
         }
 
-        console.info('Received message from mq: ', { streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId, name: msgResult.name })
+        console.info('Received source message from mq: ', {
+            streamMessageId: msgResult.streamMessageId,
+            jobId: msgResult.jobId,
+            name: msgResult.name,
+            sourceRetryCount: msgResult.retried,
+            maxSourceRetry: msgResult.maxRetry
+        })
 
 
         // step 2: call service
@@ -122,9 +128,15 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
                 await setHash(`jobs:${msgResult.jobId}`, { lastTriedAt: Date.now().toString() })
                 // XNACK
                 await nAckMessage(streamKey, groupName, 'FAIL', [msgResult.streamMessageId])
-                console.warn('Message released for retry: ', { streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId, retried, maxRetry: msgResult.maxRetry })
+                console.warn('Source message released after service failure: ', {
+                    streamMessageId: msgResult.streamMessageId,
+                    jobId: msgResult.jobId,
+                    sourceRetryCount: retried,
+                    maxSourceRetry: msgResult.maxRetry,
+                    nextAction: retried >= msgResult.maxRetry ? 'move_to_dlq' : 'retry_service'
+                })
             } catch (e) {
-                console.error('Failed to prepare message retry', { e, streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId })
+                console.error('Failed to release source message after service failure: ', { error: e, streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId })
                 throw e
             }
             continue
@@ -144,29 +156,16 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
             createdBy: groupName,
             retried: 0,
             maxRetry: msgResult.maxRetry,
-            lastTriedAt: responseCreatedAt
+            lastTriedAt: responseCreatedAt,
+            msg: serviceResult.msg ?? (serviceResult.err ? 'SERVICE_ERROR' : 'SERVICE_SUCCESS')
         }
 
         let responseMessage: ResponseMessage
         if (serviceResult.err) {
-            const errorCode = serviceResult.msg ?? 'SERVICE_ERROR'
-            responseMessage = {
-                ...responseMessageBase,
-                result: 'error',
-                error: {
-                    code: errorCode,
-                    message: errorCode
-                }
-            }
+            responseMessage = {...responseMessageBase, result: 'error'}
         } else {
-            if (!serviceResult.payload) {
-                throw 'MISSING_SERVICE_RESPONSE_PAYLOAD'
-            }
-            responseMessage = {
-                ...responseMessageBase,
-                result: 'success',
-                payload: serviceResult.payload
-            }
+            if (!serviceResult.payload) throw 'MISSING_SERVICE_RESPONSE_PAYLOAD'
+            responseMessage = {...responseMessageBase, result: 'success', payload: serviceResult.payload}
         }
 
         let dispatchSucceeded = false
@@ -174,6 +173,10 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
         let lastDispatchError: unknown = null
 
         while (dispatchRetryCount <= responseMessage.maxRetry) {
+            if (dispatchRetryCount > 0) {
+                console.warn('Retrying response dispatch: ', {responseId, requestJobId: responseMessage.requestJobId, dispatchRetryCount, maxDispatchRetry: responseMessage.maxRetry})
+            }
+
             const responseMessageFields = [
                 'requestJobId', responseMessage.requestJobId,
                 'name', responseMessage.name,
@@ -182,28 +185,40 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
                 'retried', dispatchRetryCount.toString(),
                 'maxRetry', responseMessage.maxRetry.toString(),
                 'lastTriedAt', Date.now().toString(),
-                'result', responseMessage.result
+                'result', responseMessage.result,
+                'msg', responseMessage.msg
             ]
 
             if (responseMessage.result === 'success') {
                 responseMessageFields.push('payload', JSON.stringify(responseMessage.payload))
-            } else {
-                responseMessageFields.push('error', JSON.stringify(responseMessage.error))
             }
 
             try {
                 await dispatchMessage(responseStreamKey, responseId, cacheClient, responseMessageFields)
                 dispatchSucceeded = true
-                console.info('Response dispatched successfully: ', { responseId, requestJobId: msgResult.jobId, retryCount: dispatchRetryCount})
+
+                console.info('Response dispatched to mq: ', {
+                    responseId,
+                    requestJobId: responseMessage.requestJobId,
+                    responseName: responseMessage.name,
+                    result: responseMessage.result,
+                    msg: responseMessage.msg,
+                    dispatchRetryCount,
+                    maxDispatchRetry: responseMessage.maxRetry
+                })
+
                 break
             }catch(dispatchError){
                 lastDispatchError = dispatchError
                 console.error('Response dispatch attempt failed: ', {
                     error: dispatchError,
                     responseId,
-                    requestJobId: msgResult.jobId,
-                    retryCount: dispatchRetryCount,
-                    maxRetry: responseMessage.maxRetry
+                    requestJobId: responseMessage.requestJobId,
+                    responseName: responseMessage.name,
+                    result: responseMessage.result,
+                    msg: responseMessage.msg,
+                    dispatchRetryCount,
+                    maxDispatchRetry: responseMessage.maxRetry
                 })
 
                 if (dispatchRetryCount >= responseMessage.maxRetry) break
