@@ -10,11 +10,13 @@
 //     payload: any
 // }
 
-import type { TaskOperationResponsePayload } from "@commontypes/taskType"
+import type { TaskResponsePayload } from "@commontypes/taskType"
+import type { ResponseName } from '@commontypes/messageType'
 
 export type HandlerResult = {
     res: 'success' | 'fail' | 'error',
     msg: string,
-    payload?: TaskOperationResponsePayload,
+    responseName?:ResponseName
+    payload?: TaskResponsePayload,
     next?: 'retry' | 'notify'
 }

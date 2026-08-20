@@ -1,15 +1,15 @@
 import type {
     AddFileToTaskPayload,
-    CreateLeaveTaskPayload,
+    CreateTaskPayload,
     ReviewTaskPayload,
-    TaskOperationResponsePayload
+    TaskResponsePayload
 } from '@commontypes/taskType';
 
 
 export type JobName = 'addFileToTask' | 'createTask' | 'reviewTask'
 
 
-export type JobPayload = AddFileToTaskPayload | CreateLeaveTaskPayload | ReviewTaskPayload
+export type JobPayload = AddFileToTaskPayload | CreateTaskPayload | ReviewTaskPayload
 
 
 export type JobMessage = {
@@ -34,10 +34,11 @@ export type ResponseError = {
     message: string
 }
 
+export type ResponseName = 'taskCreated'| 'taskApproved' | 'taskRejected'| 'taskOperationFailed' | 'fileAddedToTask'
 
 export type ResponseMessageBase = {
     requestJobId: string,
-    name: JobName,
+    name: ResponseName,
     createdAt: number,
     createdBy: string,
     retried: number,
@@ -49,7 +50,7 @@ export type ResponseMessageBase = {
 export type ResponseMessage =
     ResponseMessageBase & {
         result: 'success',
-        payload: TaskOperationResponsePayload,
+        payload: TaskResponsePayload,
     }
 
     | ResponseMessageBase & {

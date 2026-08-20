@@ -108,7 +108,7 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
         }
 
         try {
-            serviceResult = await serviceRoute(msgResult.name, msgResult.payload)
+            serviceResult = await serviceRoute(msgResult.name, msgResult.payload, msgResult.jobId)
         } catch (serviceError) {
             console.error('Service execution failed: ', { error: serviceError, streamMessageId: msgResult.streamMessageId, jobId: msgResult.jobId, name: msgResult.name })
             serviceResult = { err: true, ack: false, msg: 'SERVICE_FUNCTION_FAILED'}
@@ -130,13 +130,16 @@ export const initConsumingMessageQueue = async (streamKey: string, groupName: st
             continue
         }
 
+        if (!serviceResult.responseName) {
+            throw 'MISSING_SERVICE_RESPONSE_NAME'
+        }
 
         // step 3: push result back to message queue
         const responseCreatedAt = Date.now()
         const responseId = Bun.hash(`response:${msgResult.jobId}`).toString()
         const responseMessageBase = {
             requestJobId: msgResult.jobId,
-            name: msgResult.name,
+            name: serviceResult.responseName,
             createdAt: responseCreatedAt,
             createdBy: groupName,
             retried: 0,

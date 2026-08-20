@@ -29,6 +29,7 @@ export type CreateLeaveTaskPayload = {
     details: LeaveTaskDetails
 }
 
+export type CreateTaskPayload = CreateLeaveTaskPayload
 
 export type ReviewTaskPayload = {
     taskId: string,
@@ -69,7 +70,7 @@ export type TaskRecord = {
 }
 
 
-export type TaskResponsePayload = {
+export type TaskServiceResultPayload = {
     taskId: string,
     taskType: TaskType,
     status: TaskStatus,
@@ -91,4 +92,4 @@ export type AddFileToTaskResponsePayload = {
     taskIds: string[]
 }
 
-export type TaskOperationResponsePayload = TaskResponsePayload | AddFileToTaskResponsePayload
+export type TaskResponsePayload = AddFileToTaskResponsePayload | TaskServiceResultPayload

@@ -3,9 +3,18 @@
  * 1. add files to tasks
  * 2. ...
  */
-import { getHashAllFields } from '@modules/cache'
+import { getHashAllFields, setHash } from '@modules/cache'
 import type { HandlerResult } from '@commontypes/handlerType'
+import type { CreateTaskPayload, TaskAssignment, TaskRecord, TaskServiceResultPayload } from '@/commontypes/taskType'
 
+const taskAssignments: Record<string, TaskAssignment> = {
+    'leave:U0AMWQX3CQG': {
+        taskType: 'leave',
+        submitterId: 'U0AMWQX3CQG',
+        approverId: 'U0BJR2NMZ6D',
+        observerId: 'U0BJR2NMZ6D'
+    }
+}
 
 
 export const addFileToTask = async (config): Promise<HandlerResult> => {
@@ -62,5 +71,121 @@ export const addFileToTask = async (config): Promise<HandlerResult> => {
 
 
     // return result in msg for message queue level script to response back to producer
-    return { res: 'success',  msg: `successfully added file to ${workEntities.length} tasks`,   payload: { fileId, taskIds: selectedValues} }
+    return { res: 'success',  msg: `successfully added file to ${workEntities.length} tasks`, responseName: 'fileAddedToTask', payload: { fileId, taskIds: selectedValues} }
+}
+
+
+export const createTask = async (payload: CreateTaskPayload, requestJobId: string): Promise<HandlerResult> => {
+
+    if(!payload) throw 'MISSING_PARAMETER_PAYLOAD'
+    if(!requestJobId) throw 'MISSING_PARAMETER_REQUEST_JOB_ID'
+
+    if (typeof payload !== 'object' || !('taskType' in payload)) {
+        throw 'INVALID_CREATE_TASK_PAYLOAD'
+    }
+
+    if (!payload.title || typeof payload.title !== 'string') throw 'INVALID_TASK_TITLE'
+    if (!payload.submitterId || typeof payload.submitterId !== 'string') throw 'INVALID_TASK_SUBMITTER_ID'
+    if (!payload.details || typeof payload.details !== 'object' || !('leaveType' in payload.details)) throw 'INVALID_TASK_DETAILS'
+
+
+    switch (payload.taskType) {
+        case 'leave':
+            if (!('startAt' in payload.details) || typeof payload.details.startAt !== 'number' || !Number.isFinite(payload.details.startAt)
+                || !('endAt' in payload.details) || typeof payload.details.endAt !== 'number' || !Number.isFinite(payload.details.endAt) ) {
+                throw 'INVALID_LEAVE_TASK_DETAILS'
+            }
+
+            if (payload.details.startAt >= payload.details.endAt) {
+                throw 'INVALID_LEAVE_TIME_RANGE'
+            }
+
+            break
+
+        default:
+            throw 'UNSUPPORTED_TASK_TYPE'
+    }
+
+
+    // Search approverId and observerId according to taskType and submitterId
+    const taskAssignmentKey = `${payload.taskType}:${payload.submitterId}`
+    const taskAssignment = taskAssignments[taskAssignmentKey]
+    if (!taskAssignment) {
+        return { res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' }
+    }
+
+    // Build TaskRecord and save to "db"
+    const taskId = Bun.hash(`task:${requestJobId}`).toString()
+    const now = Date.now()
+
+    const taskRecord: TaskRecord = {
+        taskId,
+        taskType: payload.taskType,
+        status: 'PENDING',
+
+        sourceJobId: requestJobId,
+
+        submitterId: payload.submitterId,
+        approverId: taskAssignment.approverId,
+        observerId: taskAssignment.observerId,
+
+        title: payload.title,
+        description: payload.description,
+        details: payload.details,
+
+        createdAt: now,
+        updatedAt: now
+    }
+
+    const taskKey = `tasks:${taskId}`
+    // Save task record only if tasks:<taskId> does not exist
+    try {
+        await getHashAllFields(taskKey)
+        return { res: 'error', msg: 'TASK_ALREADY_EXISTS' }
+    } catch (error) {
+        if (error !== 'NO_RECORD_FOUND') {
+            throw error
+        }
+    }
+
+    const taskHashFields: Record<string, string> = {
+        taskId: taskRecord.taskId,
+        taskType: taskRecord.taskType,
+        status: taskRecord.status,
+
+        sourceJobId: taskRecord.sourceJobId,
+
+        submitterId: taskRecord.submitterId,
+        approverId: taskRecord.approverId,
+        observerId: taskRecord.observerId,
+
+        title: taskRecord.title,
+        details: JSON.stringify(taskRecord.details),
+
+        createdAt: taskRecord.createdAt.toString(),
+        updatedAt: taskRecord.updatedAt.toString()
+    }
+
+    if (taskRecord.description !== undefined) {
+        taskHashFields.description = taskRecord.description
+    }
+
+    await setHash(taskKey, taskHashFields)
+
+    // Send back service result
+    const taskServiceResultPayload: TaskServiceResultPayload = {
+        taskId: taskRecord.taskId,
+        taskType: taskRecord.taskType,
+        status: taskRecord.status,
+
+        submitterId: taskRecord.submitterId,
+        approverId: taskRecord.approverId,
+        observerId: taskRecord.observerId,
+
+        title: taskRecord.title,
+        description: taskRecord.description,
+        details: taskRecord.details
+    }
+
+    return { res: 'success', msg: 'TASK_CREATED', responseName: 'taskCreated', payload: taskServiceResultPayload }
 }
