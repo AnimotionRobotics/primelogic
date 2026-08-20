@@ -1,7 +1,7 @@
 /**
  * All Business Logics should be accomplished by calling modules or 3rd party APIs in here
  */
-import { addFileToTask, createTask } from './task'
+import { addFileToTask, createTask, reviewTask } from './task'
 import type { HandlerResult } from '@/commontypes/handlerType'
 import type { JobName, JobPayload, ResponseName } from '@/commontypes/messageType'
 import type { TaskResponsePayload } from '@commontypes/taskType'
@@ -9,14 +9,7 @@ export { addFileToTask }
 
 export type ServiceFunction = ( payload: JobPayload, requestJobId: string ) => Promise<HandlerResult>
 
-const serviceFunctions:Partial<Record<JobName, ServiceFunction>> = { addFileToTask, createTask}
-
-// const serviceFunctions = {
-//     addFileToTask?: ServiceFunction
-//     createTask?: ServiceFunction
-//     reviewTask?: ServiceFunction
-// }
-
+const serviceFunctions: Record<JobName, ServiceFunction> = { addFileToTask, createTask, reviewTask}
 
 
 /**
@@ -65,6 +58,6 @@ export const serviceRoute = async (funcName: JobName, payload: JobPayload, reque
     }
 
     // for accomplishment case, broadcase back to upstream service, and tell message queue handler to ack this message
-    return { err: false, ack: true, msg: handlerResult.msg, responseName: handlerResult.responseName, payload: handlerResult.payload}
+    return { err: false, ack: true, msg: handlerResult.msg, responseName: handlerResult.responseName, payload: handlerResult.payload }
 
 }

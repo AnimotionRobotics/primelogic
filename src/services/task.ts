@@ -5,7 +5,9 @@
  */
 import { getHashAllFields, setHash } from '@modules/cache'
 import type { HandlerResult } from '@commontypes/handlerType'
-import type { CreateTaskPayload, TaskAssignment, TaskRecord, TaskServiceResultPayload } from '@/commontypes/taskType'
+import type { CreateTaskPayload, ReviewTaskPayload, TaskType } from '@/commontypes/taskType'
+import type { TaskAssignment, TaskRecord, TaskServiceResultPayload, TaskStatus, LeaveTaskDetails} from '@/commontypes/taskType'
+import type { ResponseName } from '@commontypes/messageType'
 
 const taskAssignments: Record<string, TaskAssignment> = {
     'leave:U0AMWQX3CQG': {
@@ -188,4 +190,82 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
     }
 
     return { res: 'success', msg: 'TASK_CREATED', responseName: 'taskCreated', payload: taskServiceResultPayload }
+}
+
+
+export const reviewTask = async(payload: ReviewTaskPayload, requestJobId: string) : Promise<HandlerResult> => {
+
+    if(!payload) throw 'MISSING_PARAMETER_PAYLOAD'
+    if(!requestJobId) throw 'MISSING_PARAMETER_REQUEST_JOB_ID'
+
+    if (typeof payload !== 'object' || !('taskId' in payload) || !('approverId' in payload) || !('decision' in payload)) throw 'INVALID_REVIEW_TASK_PAYLOAD'
+
+    if (typeof payload.taskId !== 'string' || payload.taskId.trim().length === 0) throw 'INVALID_TASK_ID'
+
+    if (typeof payload.approverId !== 'string' || payload.approverId.trim().length === 0) throw 'INVALID_APPROVER_ID'
+
+    if (payload.decision !== 'approve' && payload.decision !== 'reject') throw 'INVALID_REVIEW_DECISION'
+
+    // Load task record
+    let taskFields: Record<string, string>
+    try {
+        taskFields = await getHashAllFields(`tasks:${payload.taskId}`)
+    } catch (error) {
+        if (error === 'NO_RECORD_FOUND') {
+            return { res: 'error', msg: 'TASK_NOT_FOUND' }
+        }
+        throw error
+    }
+
+    // Validate task record
+    if (payload.approverId !== taskFields.approverId) {
+        return { res: 'error', msg: 'TASK_REVIEW_FORBIDDEN' }
+    }
+
+    if (taskFields.status !== 'PENDING') {
+        return { res: 'error', msg: 'TASK_ALREADY_REVIEWED' }
+    }
+
+    // Modify task record fields
+    const nextStatus: TaskStatus = payload.decision === 'approve' ? 'APPROVED' : 'REJECTED'
+    const reviewedAt = Date.now()
+    const updatedFields: Record<string, string> = {
+        status: nextStatus,
+        updatedAt: reviewedAt.toString(),
+        reviewedAt: reviewedAt.toString()
+    }
+
+    if (payload.comment !== undefined) {
+        updatedFields.reviewComment = payload.comment
+    }
+
+    const taskDetails = JSON.parse(taskFields.details)
+    await setHash(`tasks:${payload.taskId}`, updatedFields)
+
+    // Build service response
+    const responseName: ResponseName = payload.decision === 'approve' ? 'taskApproved' : 'taskRejected'
+    const resultMessage = payload.decision === 'approve' ? 'TASK_APPROVED' : 'TASK_REJECTED'
+
+    const taskServiceResultPayload: TaskServiceResultPayload = {
+        taskId: payload.taskId,
+        taskType: taskFields.taskType as TaskType,
+        status: nextStatus,
+
+        submitterId: taskFields.submitterId,
+        approverId: taskFields.approverId,
+        observerId: taskFields.observerId,
+
+        title: taskFields.title,
+        details: taskDetails
+    }
+
+    if (taskFields.description !== undefined) {
+        taskServiceResultPayload.description = taskFields.description
+    }
+
+    if (payload.comment !== undefined) {
+        taskServiceResultPayload.reviewComment = payload.comment
+    }
+
+    return { res: 'success', msg: resultMessage, responseName, payload: taskServiceResultPayload }
 }

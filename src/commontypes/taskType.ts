@@ -1,11 +1,6 @@
 export type TaskType = 'leave'
 
-
 export type TaskStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
-
-
-export type ReviewDecision = 'APPROVE' | 'REJECT'
-
 
 export type LeaveTaskDetails = {
     leaveType: 'annual' | 'sick',
@@ -30,6 +25,8 @@ export type CreateLeaveTaskPayload = {
 }
 
 export type CreateTaskPayload = CreateLeaveTaskPayload
+
+export type ReviewDecision = 'approve' | 'reject'
 
 export type ReviewTaskPayload = {
     taskId: string,
