@@ -157,8 +157,6 @@ export const dispatchMessage = async (responseStreamKey: string, responseId: str
 
     if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'
 
-    console.log('Dispatch response to mq: ', { responseStreamKey, responseId })
-
     // add responseId to store.
     try {
         await cacheClient.hmset(`responses:${responseId}`, responseMessageFields)
