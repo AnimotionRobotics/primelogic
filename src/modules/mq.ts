@@ -157,25 +157,16 @@ export const dispatchMessage = async (responseStreamKey: string, responseId: str
 
     if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'
 
-    // add responseId to store.
-    try {
-        await cacheClient.hmset(`responses:${responseId}`, responseMessageFields)
-    } catch (e) {
-        throw 'FAILED_STORE_RESPONSE_MESSAGE'
-    }
+    // Save response
+    await cacheClient.hmset(`responses:${responseId}`, responseMessageFields)
 
-    // add to message queue
-    try {
-        await messageQueueClient.send('XADD', [
-            responseStreamKey,
-            "MAXLEN", "~", "10000", "*",
-            "produced_time", Date.now().toString(),
-            "payload", responseId
-        ])
-    } catch (e) {
-        console.error('Failed to dispatch to redis stream, e: ', e)
-        throw 'FAILED_DISPATCH_MESSAGE'
-    }
+    // Push response to mq
+    await messageQueueClient.send('XADD', [
+        responseStreamKey,
+        "MAXLEN", "~", "10000", "*",
+        "produced_time", Date.now().toString(),
+        "payload", responseId
+    ])
 }
 
 
@@ -209,7 +200,6 @@ export type GetMessageError = {
     streamMessageId: string
     jobId?: string
 }
-
 export const getMessage = async (streamKey: string, config?: {groupName: string, consumerName: string, claimMinIdleTime: number}, blockTimeout: number = 1000): Promise<ConsumedJobMessage> => {
 
     let cmd = 'XREAD'
@@ -351,7 +341,7 @@ export const getMessage = async (streamKey: string, config?: {groupName: string,
 
 
 /**
- * Acknowledge Message in Consumer Group
+ * Ack message in consumer group
  */
 export const ackMessage = async (streamKey: string, groupName: string, messageId: string, del?: boolean) : Promise<number> => {
 
@@ -380,7 +370,7 @@ export const ackMessage = async (streamKey: string, groupName: string, messageId
 
 
 /**
- * Negatively Acknowledge Message
+ * NACK message
  * Relase message from PEL , make this message consumable again
  * mode:
  *  SILENT: Decrements the delivery counter by 1, essentially "undoing" the delivery increment. Use this for an internal failure on the consumer side while processing the message or graceful shutdown where the delivery "didn't count".
@@ -440,13 +430,6 @@ export const setAllowConsume = async (allow: boolean) => {
 }
 
 
-export type DeadLetterMessage = {
-    sourceStreamKey: string
-    sourceStreamMessageId: string
-    sourceJobId?: string
-    errorCode: string
-    createdAt: number
-}
 // for DLQ or simple stream append
 export const appendStreamMessage = async (streamKey: string, fields: string[]): Promise<string> => {
     if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'

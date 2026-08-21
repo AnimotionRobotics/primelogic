@@ -78,8 +78,14 @@ export const APP_START_HANDLER = async () => {
     }
 
     try {
-        await initConsumingMessageQueue(process.env.MQ_LISTEN_STREAM_KEY, process.env.MQ_LISTEN_STREAM_CONSUMER_GROUP, 'slack-msg-consumer-01',
-                                        claimMinIdleTime, process.env.MQ_TARGET_STREAM_KEY, process.env.MQ_DLQ_STREAM_KEY)
+        await initConsumingMessageQueue({
+            streamKey: process.env.MQ_LISTEN_STREAM_KEY,
+            groupName: process.env.MQ_LISTEN_STREAM_CONSUMER_GROUP,
+            consumerName: 'slack-msg-consumer-01',
+            claimMinIdleTime,
+            responseStreamKey: process.env.MQ_TARGET_STREAM_KEY,
+            dlqStreamKey: process.env.MQ_DLQ_STREAM_KEY
+        })
     } catch (e) {
         console.error('initConsumingMessageQueue(), e: ', e)
         process.exit(1)
@@ -107,8 +113,8 @@ export const SIGINT_HANDLER = async () => {
     console.log(`\n\n${new Date()}\nSIGINT_HANDLER: Gracefully shutting down initiated.`);
     setAllowConsume(false)
 
-    // Wait for in-flight getMessage to complete before disconnecting clients.
-    // The delay should be slightly longer than the getMessage blockTimeout.
+    // Wait for in-flight getMessage to complete before disconnecting clients
+    // The delay should be slightly longer than the getMessage blockTimeout
     console.log('Waiting 5000ms for on-going message queue iteration finish...')
     await new Promise(resolve => setTimeout(resolve, 5000));
 

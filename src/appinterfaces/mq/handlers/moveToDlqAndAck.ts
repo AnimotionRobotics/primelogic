@@ -8,6 +8,8 @@ export type DeadLetterParams = {
     sourceJobId?: string,
     errorCode: string
 }
+
+// Move source message to DLQ first, then ack it and return the DLQ stream message ID
 export const moveToDlqAndAckSourceMessage = async (dlqParams: DeadLetterParams): Promise<string> => {
     const deadLetterFields = [
         'sourceStreamKey', dlqParams.sourceStreamKey,

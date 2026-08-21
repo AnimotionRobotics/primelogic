@@ -20,9 +20,9 @@ const dlqGetMessageErrorCodes: string[] = [
 /**
  * Handler for failure situation of getting message from redis stream
  */
-export const onGetMessageError = (error: unknown, streamKey: string, groupName: string, consumerName: string): error is GetMessageError => {
+export const onGetMessageError = (error: unknown): error is GetMessageError => {
 
-    // identify whether the error can be handled by DLQ, other errors are considered as critical
+    // Identify whether the error can be handled by DLQ, other errors are considered as critical
     const canPushToDlq = typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' &&
         'streamMessageId' in error && typeof error.streamMessageId === 'string' && dlqGetMessageErrorCodes.includes(error.code)
 
