@@ -6,3 +6,6 @@ node_modules
 
 
 dist
+
+# Editor swap files
+*.swp
