@@ -1,22 +1,9 @@
 import { getHashAllFields, setHash } from '@modules/cache'
-import type { CreateTaskPayload, TaskAssignment, TaskRecord, TaskServiceResultPayload } from '@commontypes/taskType'
+import type { CreateTaskPayload, TaskRecord, TaskServiceResultPayload, TaskStatus, TaskType, TaskDetails } from '@commontypes/taskType'
+import { supportedLeaveTypes } from '@/commontypes/leaveTaskType'
 import type { HandlerResult } from './index'
+import { taskAssignments } from './taskAssignments'
 
-const taskAssignments: Record<string, TaskAssignment> = {
-    'leave:U0AMWQX3CQG': {
-        taskType: 'leave',
-        submitterId: 'U0AMWQX3CQG',
-        approverId: 'U0BJR2NMZ6D',
-        observerId: 'U0BJR2NMZ6D'
-    },
-
-    'leave:U0BJR2NMZ6D': {
-        taskType: 'leave',
-        submitterId: 'U0BJR2NMZ6D',
-        approverId: 'U0AMWQX3CQG',
-        observerId: 'U0BJR2NMZ6D'
-    }
-}
 
 // Create a task and save it
 export const createTask = async (payload: CreateTaskPayload, requestJobId: string): Promise<HandlerResult> => {
@@ -33,25 +20,32 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         throw 'INVALID_CREATE_TASK_PAYLOAD'
     }
 
-    if (!payload.title || typeof payload.title !== 'string') {
-        throw 'INVALID_TASK_TITLE'
-    }
-
-    if (!payload.submitterId || typeof payload.submitterId !== 'string') {
+    if (typeof payload.submitterId !== 'string' || payload.submitterId.trim().length === 0) {
         throw 'INVALID_TASK_SUBMITTER_ID'
     }
 
-    if (!payload.details || typeof payload.details !== 'object' || !('leaveType' in payload.details)) {
+    if (typeof payload.title !== 'string' || payload.title.trim().length === 0) {
+        throw 'INVALID_TASK_TITLE'
+    }
+
+    if (payload.description !== undefined && typeof payload.description !== 'string') {
+        throw 'INVALID_TASK_DESCRIPTION'
+    }
+
+    if (!payload.details || typeof payload.details !== 'object') {
         throw 'INVALID_TASK_DETAILS'
     }
 
     switch (payload.taskType) {
         case 'leave': {
+            if (!('leaveType' in payload.details) || !supportedLeaveTypes.includes(payload.details.leaveType)) {
+                throw 'INVALID_LEAVE_TYPE'
+            }
             const hasValidStartAt = 'startAt' in payload.details && typeof payload.details.startAt === 'number' && Number.isFinite(payload.details.startAt)
             const hasValidEndAt = 'endAt' in payload.details && typeof payload.details.endAt === 'number' && Number.isFinite(payload.details.endAt)
 
             if (!hasValidStartAt || !hasValidEndAt) {
-                throw 'INVALID_LEAVE_TASK_DETAILS'
+                throw 'INVALID_LEAVE_TIME'
             }
 
             if (payload.details.startAt >= payload.details.endAt) {
@@ -115,16 +109,19 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
     if (existingTaskFields) {
         const existingTaskServiceResultPayload: TaskServiceResultPayload = {
             taskId: existingTaskFields.taskId,
-            taskType: taskRecord.taskType,
-            status: taskRecord.status,
+            taskType: existingTaskFields.taskType as TaskType,
+            status: existingTaskFields.status as TaskStatus,
 
             submitterId: existingTaskFields.submitterId,
             approverId: existingTaskFields.approverId,
             observerId: existingTaskFields.observerId,
 
             title: existingTaskFields.title,
-            description: existingTaskFields.description,
-            details: taskRecord.details
+            details: JSON.parse(existingTaskFields.details) as TaskDetails
+        }
+
+        if (existingTaskFields.description !== undefined) {
+            existingTaskServiceResultPayload.description = existingTaskFields.description
         }
 
         return { res: 'success', msg: 'TASK_CREATED', responseName: 'taskCreated', payload: existingTaskServiceResultPayload }
@@ -166,8 +163,11 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         observerId: taskRecord.observerId,
 
         title: taskRecord.title,
-        description: taskRecord.description,
         details: taskRecord.details
+    }
+
+    if (taskRecord.description !== undefined) {
+        taskServiceResultPayload.description = taskRecord.description
     }
 
     return { res: 'success', msg: 'TASK_CREATED', responseName: 'taskCreated', payload: taskServiceResultPayload }

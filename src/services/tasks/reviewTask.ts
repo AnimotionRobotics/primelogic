@@ -1,5 +1,5 @@
 import { getHashAllFields, setHash } from '@modules/cache'
-import type { ReviewTaskPayload, TaskServiceResultPayload, TaskStatus, TaskType } from '@commontypes/taskType'
+import type { ReviewTaskPayload, TaskDetails, TaskServiceResultPayload, TaskStatus, TaskType } from '@commontypes/taskType'
 import type { ResponseName } from '@commontypes/messageType'
 import type { HandlerResult } from './index'
 
@@ -30,6 +30,10 @@ export const reviewTask = async (payload: ReviewTaskPayload, requestJobId: strin
 
     if (payload.decision !== 'approve' && payload.decision !== 'reject') {
         throw 'INVALID_REVIEW_DECISION'
+    }
+
+    if (payload.comment !== undefined && typeof payload.comment !== 'string') {
+        throw 'INVALID_REVIEW_COMMENT'
     }
 
     // Load the task record
@@ -70,7 +74,7 @@ export const reviewTask = async (payload: ReviewTaskPayload, requestJobId: strin
     await setHash(`tasks:${payload.taskId}`, updatedFields)
 
     // Build the service response
-    const taskDetails = JSON.parse(taskFields.details)
+    const taskDetails = JSON.parse(taskFields.details) as TaskDetails
     const responseName: ResponseName = reviewStatus === 'APPROVED' ? 'taskApproved' : 'taskRejected'
     const resultMessage = reviewStatus === 'APPROVED' ? 'TASK_APPROVED' : 'TASK_REJECTED'
 

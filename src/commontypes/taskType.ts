@@ -1,12 +1,10 @@
+import type { CreateLeaveTaskPayload, LeaveTaskDetails, UpdateLeaveTaskPayload } from '@/commontypes/leaveTaskType'
+
 export type TaskType = 'leave'
 
 export type TaskStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 
-export type LeaveTaskDetails = {
-    leaveType: 'annual' | 'sick',
-    startAt: number,
-    endAt: number
-}
+export type TaskDetails = LeaveTaskDetails
 
 export type AddFileToTaskPayload = {
     fileId: string,
@@ -16,15 +14,9 @@ export type AddFileToTaskPayload = {
     responseUrl?: string
 }
 
-export type CreateLeaveTaskPayload = {
-    taskType: 'leave',
-    title: string,
-    description?: string,
-    submitterId: string,
-    details: LeaveTaskDetails
-}
-
 export type CreateTaskPayload = CreateLeaveTaskPayload
+
+export type UpdateTaskPayload = UpdateLeaveTaskPayload
 
 export type ReviewDecision = 'approve' | 'reject'
 
@@ -35,14 +27,12 @@ export type ReviewTaskPayload = {
     comment?: string
 }
 
-
 export type TaskAssignment = {
     taskType: TaskType,
     submitterId: string,
     approverId: string,
     observerId: string
 }
-
 
 export type TaskRecord = {
     taskId: string,
@@ -57,7 +47,7 @@ export type TaskRecord = {
 
     title: string,
     description?: string,
-    details: LeaveTaskDetails,
+    details: TaskDetails,
 
     createdAt: number,
     updatedAt: number,
@@ -65,7 +55,6 @@ export type TaskRecord = {
     reviewedAt?: number,
     reviewComment?: string
 }
-
 
 export type TaskServiceResultPayload = {
     taskId: string,
@@ -78,11 +67,10 @@ export type TaskServiceResultPayload = {
 
     title: string,
     description?: string,
-    details: LeaveTaskDetails,
+    details: TaskDetails,
 
     reviewComment?: string
 }
-
 
 export type AddFileToTaskResponsePayload = {
     fileId: string,
