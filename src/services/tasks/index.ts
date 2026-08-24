@@ -13,3 +13,4 @@ export type HandlerResult = {
 export { addFileToTask } from './addFileToTask'
 export { createTask } from './createTask'
 export { reviewTask } from './reviewTask'
+export { updateTask } from './updateTask'

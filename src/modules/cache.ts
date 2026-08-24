@@ -483,3 +483,25 @@ export const getJson = async (key: string, path?: string) => {
     return res
 
 }
+
+// Delete multiple fields from a hash
+export const deleteHashFields  = async (key: string, fields:string[]): Promise<void> => {
+	if (!cacheClient) {
+		throw 'CACHE_CLIENT_NOT_INITIALIZED'
+	}
+
+	if (!key) {
+		throw 'CACHE_KEY_REQUIRED'
+	}
+
+	if (!Array.isArray(fields) || fields.length ===0) {
+		throw 'HASH_FIELDS_REQUIRED'
+	}
+
+	try {
+		// HDEL requires one field first, then accepts any remaining fields
+		await cacheClient.hdel(key, fields[0], ...fields.slice(1))
+	} catch {
+		throw 'DELETE_HASH_FIELDS_FAILED'
+	}
+}

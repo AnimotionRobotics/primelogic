@@ -4,6 +4,7 @@
  * @date 5 June 2026
  */
 import { RedisClient } from 'bun'
+import { supportedJobNames } from '@/commontypes/messageType'
 import type { ConsumedJobMessage, JobName, JobPayload } from '@/commontypes/messageType'
 
 export let allowConsuming: boolean = false
@@ -302,8 +303,6 @@ export const getMessage = async (streamKey: string, config?: {groupName: string,
         const error: GetMessageError = { code: 'INVALID_JOB_CREATED_BY', streamMessageId,jobId}
         throw error
     }
-
-    const supportedJobNames: JobName[] = ['addFileToTask', 'createTask', 'reviewTask']
 
     if (!supportedJobNames.includes(jobFields.name as JobName)) {
         const error: GetMessageError = { code: 'INVALID_JOB_NAME', streamMessageId, jobId}

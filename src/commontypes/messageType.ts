@@ -1,16 +1,10 @@
-import type {
-    AddFileToTaskPayload,
-    CreateTaskPayload,
-    ReviewTaskPayload,
-    TaskResponsePayload
-} from '@commontypes/taskType';
+import type { AddFileToTaskPayload, CreateTaskPayload, ReviewTaskPayload, TaskResponsePayload, UpdateTaskPayload} from '@commontypes/taskType';
 
+export const supportedJobNames = ['addFileToTask', 'createTask', 'reviewTask', 'updateTask'] as const
 
-export type JobName = 'addFileToTask' | 'createTask' | 'reviewTask'
+export type JobName = typeof supportedJobNames[number]
 
-
-export type JobPayload = AddFileToTaskPayload | CreateTaskPayload | ReviewTaskPayload
-
+export type JobPayload = AddFileToTaskPayload | CreateTaskPayload | ReviewTaskPayload | UpdateTaskPayload
 
 export type JobMessage = {
     name: JobName,
@@ -22,13 +16,12 @@ export type JobMessage = {
     payload: JobPayload
 }
 
-
 export type ConsumedJobMessage = JobMessage & {
     streamMessageId: string
     jobId: string,
 }
 
-export type ResponseName = 'taskCreated'| 'taskApproved' | 'taskRejected'| 'taskOperationFailed' | 'fileAddedToTask'
+export type ResponseName = 'taskCreated'| 'taskApproved' | 'taskRejected'| 'taskOperationFailed' | 'fileAddedToTask' | 'taskUpdated'
 
 export type ResponseMessageBase = {
     requestJobId: string,
@@ -41,7 +34,6 @@ export type ResponseMessageBase = {
     msg: string
 }
 
-
 export type ResponseMessage =
     ResponseMessageBase & {
         result: 'success',
@@ -51,8 +43,6 @@ export type ResponseMessage =
     | ResponseMessageBase & {
         result: 'error'
     }
-
-
 
 export type ConsumedResponseMessage = ResponseMessage & {
     responseId: string,

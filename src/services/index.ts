@@ -1,15 +1,16 @@
 /**
  * All Business Logics should be accomplished by calling modules or 3rd party APIs in here
  */
-import { addFileToTask, createTask, reviewTask } from './tasks'
+import { addFileToTask, createTask, reviewTask, updateTask } from './tasks'
 import type { HandlerResult } from './tasks'
 import type { JobName, JobPayload, ResponseName } from '@/commontypes/messageType'
 import type { TaskResponsePayload } from '@commontypes/taskType'
-export { addFileToTask, createTask, reviewTask }
+
+export { addFileToTask, createTask, reviewTask, updateTask}
 
 export type ServiceFunction = ( payload: JobPayload, requestJobId: string ) => Promise<HandlerResult>
 
-const serviceFunctions: Record<JobName, ServiceFunction> = { addFileToTask, createTask, reviewTask}
+const serviceFunctions: Record<JobName, ServiceFunction> = { addFileToTask, createTask, reviewTask, updateTask}
 
 
 /**
