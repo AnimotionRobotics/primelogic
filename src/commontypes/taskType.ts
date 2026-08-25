@@ -1,8 +1,13 @@
 import type { CreateLeaveTaskPayload, LeaveTaskDetails, UpdateLeaveTaskPayload } from '@commontypes/leaveTaskType'
 
-export type TaskType = 'leave'
+export const supportedTaskTypes = ['leave'] as const
 
-export type TaskStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+export type TaskType = typeof supportedTaskTypes[number]
+
+
+export const supportedTaskStatuses = ['PENDING', 'APPROVED', 'REJECTED'] as const
+
+export type TaskStatus = typeof supportedTaskStatuses[number]
 
 export type TaskDetails = LeaveTaskDetails
 
@@ -26,6 +31,29 @@ export type ReviewTaskPayload = {
     decision: ReviewDecision,
     comment?: string
 }
+
+type ListTasksFilter = {
+    taskType?: TaskType,
+    status?: TaskStatus,
+
+    createdAtFrom?: number,
+    createdAtTo?: number,
+
+    reviewedAtFrom?: number,
+    reviewedAtTo?: number
+}
+
+type ListTasksBySubmitterPayload = ListTasksFilter & {
+    submitterId: string,
+    approverId?: never
+}
+
+type ListTasksByApproverPayload = ListTasksFilter & {
+    submitterId?: never,
+    approverId: string
+}
+
+export type ListTasksPayload = ListTasksBySubmitterPayload | ListTasksByApproverPayload
 
 export type TaskAssignment = {
     taskType: TaskType,
@@ -69,12 +97,18 @@ export type TaskServiceResultPayload = {
     description?: string,
     details: TaskDetails,
 
+    createdAt: number,
+    updatedAt: number,
+
+    reviewedAt?: number,
     reviewComment?: string
 }
+
+export type ListTasksResponsePayload = TaskServiceResultPayload[]
 
 export type AddFileToTaskResponsePayload = {
     fileId: string,
     taskIds: string[]
 }
 
-export type TaskResponsePayload = AddFileToTaskResponsePayload | TaskServiceResultPayload
+export type TaskResponsePayload = AddFileToTaskResponsePayload | TaskServiceResultPayload | ListTasksResponsePayload

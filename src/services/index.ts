@@ -1,10 +1,10 @@
 /**
  * All Business Logics should be accomplished by calling modules or 3rd party APIs in here
  */
-import { addFileToTask, createTask, reviewTask, updateTask } from './task'
-import type { HandlerResult } from './taskServiceType'
+import { addFileToTask, createTask, reviewTask, updateTask, listTasks } from './task'
+import type { HandlerResult } from './taskSupport'
 import type { JobName, JobPayload, ResponseName } from '@commontypes/messageType'
-import type { CreateTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskResponsePayload } from '@commontypes/taskType'
+import type { CreateTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskResponsePayload, ListTasksPayload } from '@commontypes/taskType'
 
 
 /**
@@ -51,6 +51,7 @@ export const serviceRoute = async (funcName: JobName, payload: JobPayload, reque
     handlerResult = funcName === 'createTask' ? await createTask(payload as CreateTaskPayload, requestJobId) : handlerResult
     handlerResult = funcName === 'reviewTask' ? await reviewTask(payload as ReviewTaskPayload) : handlerResult
     handlerResult = funcName === 'updateTask' ? await updateTask(payload as UpdateTaskPayload) : handlerResult
+    handlerResult = funcName === 'listTasks' ? await listTasks(payload as ListTasksPayload) : handlerResult
 
     if (!handlerResult) {
         throw 'SERVICE_FUNCTION_NOT_FOUND'

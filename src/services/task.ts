@@ -1,9 +1,9 @@
-import { deleteHashFields, getHashAllFields, setHash } from '@modules/cache'
+import { addSortedSetMember, deleteHashFields, getHashAllFields, getSortedSetMembers, setHash } from '@modules/cache'
 import type { ResponseName } from '@commontypes/messageType'
-import { supportedLeaveTypes } from '@commontypes/leaveTaskType'
-import type { CreateTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskDetails, TaskRecord, TaskServiceResultPayload, TaskStatus, TaskType} from '@commontypes/taskType'
-import { taskAssignments } from './taskAssignments'
-import type { HandlerResult } from './taskServiceType'
+import { supportedTaskStatuses, supportedTaskTypes} from '@commontypes/taskType'
+import type { CreateTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskDetails, TaskRecord, TaskServiceResultPayload, TaskStatus, TaskType, ListTasksPayload, ListTasksResponsePayload} from '@commontypes/taskType'
+import { taskAssignments, validateLeaveTaskDetails } from './taskSupport'
+import type { HandlerResult, TaskDetailsValidator } from './taskSupport'
 
 // Add one file to selected tasks
 export const addFileToTask = async (config): Promise<HandlerResult> => {
@@ -69,6 +69,7 @@ export const addFileToTask = async (config): Promise<HandlerResult> => {
 // Create a task and save it
 export const createTask = async (payload: CreateTaskPayload, requestJobId: string): Promise<HandlerResult> => {
 
+    // Check task fields
     if (!('taskType' in payload)) {
         throw 'INVALID_CREATE_TASK_PAYLOAD'
     }
@@ -89,40 +90,88 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         throw 'INVALID_TASK_DETAILS'
     }
 
-    switch (payload.taskType) {
-        case 'leave': {
-            if (!('leaveType' in payload.details) || !supportedLeaveTypes.includes(payload.details.leaveType)) {
-                throw 'INVALID_LEAVE_TYPE'
-            }
-            const hasValidStartAt = 'startAt' in payload.details && typeof payload.details.startAt === 'number' && Number.isFinite(payload.details.startAt)
-            const hasValidEndAt = 'endAt' in payload.details && typeof payload.details.endAt === 'number' && Number.isFinite(payload.details.endAt)
+    // Check task details
+    let taskDetailsValidator: TaskDetailsValidator | null = null
 
-            if (!hasValidStartAt || !hasValidEndAt) {
-                throw 'INVALID_LEAVE_TIME'
-            }
+    taskDetailsValidator = payload.taskType === 'leave' ? validateLeaveTaskDetails : taskDetailsValidator
 
-            if (payload.details.startAt >= payload.details.endAt) {
-                throw 'INVALID_LEAVE_TIME_RANGE'
-            }
-
-            break
-        }
-
-        default:
-            throw 'UNSUPPORTED_TASK_TYPE'
+    if (!taskDetailsValidator) {
+        throw 'UNSUPPORTED_TASK_TYPE'
     }
 
-    // Find the task assignment
+    taskDetailsValidator(payload.details)
+
+    // Build task ID from requestJobId
+    const taskId = Bun.hash(`task:${requestJobId}`).toString()
+    const taskKey = `tasks:${taskId}`
+
+    // Find an existing task
+    let existingTaskFields: Record<string, string> | undefined
+    try {
+        existingTaskFields = await getHashAllFields(taskKey)
+    } catch (error) {
+        if (error !== 'NO_RECORD_FOUND') {
+            throw error
+        }
+    }
+
+    // Check if the task belongs to another request
+    if (existingTaskFields && existingTaskFields.sourceJobId !== requestJobId) {
+        return { res: 'error', msg: 'TASK_ALREADY_EXISTS' }
+    }
+
+    // Return the existing task for the same request
+    if (existingTaskFields) {
+        // Build the response with saved task fields
+        const existingTaskServiceResultPayload: TaskServiceResultPayload = {
+            taskId: existingTaskFields.taskId,
+            taskType: existingTaskFields.taskType as TaskType,
+            status: existingTaskFields.status as TaskStatus,
+
+            submitterId: existingTaskFields.submitterId,
+            approverId: existingTaskFields.approverId,
+            observerId: existingTaskFields.observerId,
+
+            title: existingTaskFields.title,
+            details: JSON.parse(existingTaskFields.details) as TaskDetails,
+
+            createdAt: Number(existingTaskFields.createdAt),
+            updatedAt: Number(existingTaskFields.updatedAt)
+        }
+
+        // Add saved optional fields
+        if (existingTaskFields.description !== undefined) {
+            existingTaskServiceResultPayload.description = existingTaskFields.description
+        }
+
+        if (existingTaskFields.reviewedAt !== undefined) {
+            existingTaskServiceResultPayload.reviewedAt = Number(existingTaskFields.reviewedAt)
+        }
+
+        if (existingTaskFields.reviewComment !== undefined) {
+            existingTaskServiceResultPayload.reviewComment = existingTaskFields.reviewComment
+        }
+
+        // Add the task to both indexes again
+        const existingTaskCreatedAt = Number(existingTaskFields.createdAt)
+        const taskIndexSubmitterKey = `tasks:index:submitter:${existingTaskFields.submitterId}`
+        const taskIndexApproverKey = `tasks:index:approver:${existingTaskFields.approverId}`
+
+        await addSortedSetMember(taskIndexSubmitterKey, existingTaskCreatedAt, existingTaskFields.taskId)
+        await addSortedSetMember(taskIndexApproverKey, existingTaskCreatedAt, existingTaskFields.taskId)
+
+        return { res: 'success', msg: 'TASK_CREATED', responseName: 'taskCreated', payload: existingTaskServiceResultPayload }
+    }
+
+    // Find the task assignment for a new task
     const taskAssignmentKey = `${payload.taskType}:${payload.submitterId}`
     const taskAssignment = taskAssignments[taskAssignmentKey]
     if (!taskAssignment) {
         return { res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' }
     }
 
-    // Build the task record
-    const taskId = Bun.hash(`task:${requestJobId}`).toString()
+    // Build a new task
     const now = Date.now()
-
     const taskRecord: TaskRecord = {
         taskId,
         taskType: payload.taskType,
@@ -142,44 +191,7 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         updatedAt: now
     }
 
-    const taskKey = `tasks:${taskId}`
-
-    // Check whether the task already exists
-    let existingTaskFields: Record<string, string> | undefined
-    try {
-        existingTaskFields = await getHashAllFields(taskKey)
-    } catch (error) {
-        if (error !== 'NO_RECORD_FOUND') {
-            throw error
-        }
-    }
-
-    if (existingTaskFields && existingTaskFields.sourceJobId !== requestJobId) {
-        return { res: 'error', msg: 'TASK_ALREADY_EXISTS' }
-    }
-
-    // Return the saved task when the same request is retried
-    if (existingTaskFields) {
-        const existingTaskServiceResultPayload: TaskServiceResultPayload = {
-            taskId: existingTaskFields.taskId,
-            taskType: existingTaskFields.taskType as TaskType,
-            status: existingTaskFields.status as TaskStatus,
-
-            submitterId: existingTaskFields.submitterId,
-            approverId: existingTaskFields.approverId,
-            observerId: existingTaskFields.observerId,
-
-            title: existingTaskFields.title,
-            details: JSON.parse(existingTaskFields.details) as TaskDetails
-        }
-
-        if (existingTaskFields.description !== undefined) {
-            existingTaskServiceResultPayload.description = existingTaskFields.description
-        }
-
-        return { res: 'success', msg: 'TASK_CREATED', responseName: 'taskCreated', payload: existingTaskServiceResultPayload }
-    }
-
+    // Build Redis hash fields
     const taskHashFields: Record<string, string> = {
         taskId: taskRecord.taskId,
         taskType: taskRecord.taskType,
@@ -202,10 +214,16 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         taskHashFields.description = taskRecord.description
     }
 
-    // Save the task record
     await setHash(taskKey, taskHashFields)
 
-    // Build the service response
+    // Add the task to submitter and approver indexes
+    const taskIndexSubmitterKey = `tasks:index:submitter:${taskRecord.submitterId}`
+    const taskIndexApproverKey = `tasks:index:approver:${taskRecord.approverId}`
+
+    await addSortedSetMember(taskIndexSubmitterKey, taskRecord.createdAt, taskRecord.taskId)
+    await addSortedSetMember(taskIndexApproverKey, taskRecord.createdAt, taskRecord.taskId)
+
+    // Build the response
     const taskServiceResultPayload: TaskServiceResultPayload = {
         taskId: taskRecord.taskId,
         taskType: taskRecord.taskType,
@@ -216,7 +234,10 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         observerId: taskRecord.observerId,
 
         title: taskRecord.title,
-        details: taskRecord.details
+        details: taskRecord.details,
+
+        createdAt: taskRecord.createdAt,
+        updatedAt: taskRecord.updatedAt
     }
 
     if (taskRecord.description !== undefined) {
@@ -278,33 +299,23 @@ export const updateTask = async (payload: UpdateTaskPayload): Promise<HandlerRes
         throw 'INVALID_TASK_DETAILS'
     }
 
-    switch (taskFields.taskType) {
-        case 'leave': {
-            if (!supportedLeaveTypes.includes(payload.details.leaveType)) {
-                throw 'INVALID_LEAVE_TYPE'
-            }
+    // Check task details
+    let taskDetailsValidator: TaskDetailsValidator | null = null
 
-            const hasValidStartAt = typeof payload.details.startAt === 'number' && Number.isFinite(payload.details.startAt)
-            const hasValidEndAt =  typeof payload.details.endAt === 'number' && Number.isFinite(payload.details.endAt)
-            if (!hasValidStartAt || !hasValidEndAt) {
-                throw 'INVALID_LEAVE_TIME'
-            }
+    taskDetailsValidator = taskFields.taskType === 'leave' ? validateLeaveTaskDetails : taskDetailsValidator
 
-            if (payload.details.startAt >= payload.details.endAt) {
-                throw 'INVALID_LEAVE_TIME_RANGE'
-            }
-            break
-        }
-
-        default:
-            throw 'UNSUPPORTED_TASK_TYPE'
+    if (!taskDetailsValidator) {
+        throw 'UNSUPPORTED_TASK_TYPE'
     }
 
+    taskDetailsValidator(payload.details)
+
+    const updatedAt = Date.now()
     const updatedFields: Record<string, string> = {
         status: 'PENDING',
         title: payload.title,
         details: JSON.stringify(payload.details),
-        updatedAt: Date.now().toString()
+        updatedAt: updatedAt.toString()
     }
 
     if (payload.description !== undefined) {
@@ -317,7 +328,7 @@ export const updateTask = async (payload: UpdateTaskPayload): Promise<HandlerRes
 
     const taskServiceResultPayload: TaskServiceResultPayload = {
         taskId: taskFields.taskId,
-        taskType: taskFields.taskType,
+        taskType: taskFields.taskType as TaskType,
         status: 'PENDING',
 
         submitterId: taskFields.submitterId,
@@ -325,7 +336,10 @@ export const updateTask = async (payload: UpdateTaskPayload): Promise<HandlerRes
         observerId: taskFields.observerId,
 
         title: payload.title,
-        details: payload.details
+        details: payload.details,
+
+        createdAt: Number(taskFields.createdAt),
+        updatedAt
     }
 
     const updatedDescription = payload.description ?? taskFields.description
@@ -418,7 +432,11 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
         observerId: taskFields.observerId,
 
         title: taskFields.title,
-        details: taskDetails
+        details: taskDetails,
+
+        createdAt: Number(taskFields.createdAt),
+        updatedAt: reviewedAt,
+        reviewedAt
     }
 
     if (taskFields.description !== undefined) {
@@ -430,4 +448,130 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
     }
 
     return { res: 'success', msg: resultMessage, responseName, payload: taskServiceResultPayload }
+}
+
+
+
+
+// List tasks for a submitter or approver
+export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResult> => {
+    // Check the user
+    const hasSubmitterId = payload.submitterId !== undefined
+    const hasApproverId = payload.approverId !== undefined
+
+    if (hasSubmitterId === hasApproverId) {
+        throw 'INVALID_LIST_TASKS_USER'
+    }
+
+    if (payload.submitterId !== undefined && (typeof payload.submitterId !== 'string' || payload.submitterId.trim().length === 0)) {
+        throw 'INVALID_LIST_TASKS_SUBMITTER_ID'
+    }
+
+    if (payload.approverId !== undefined && (typeof payload.approverId !== 'string' || payload.approverId.trim().length === 0)) {
+        throw 'INVALID_LIST_TASKS_APPROVER_ID'
+    }
+
+    if (payload.taskType !== undefined && !supportedTaskTypes.includes(payload.taskType)) {
+        throw 'INVALID_LIST_TASKS_TASK_TYPE'
+    }
+
+    if (payload.status !== undefined && !supportedTaskStatuses.includes(payload.status)) {
+        throw 'INVALID_LIST_TASKS_STATUS'
+    }
+
+    if (payload.reviewedAtFrom !== undefined && !Number.isFinite(payload.reviewedAtFrom)) {
+        throw 'INVALID_LIST_TASKS_REVIEWED_AT_FROM'
+    }
+
+    if (payload.reviewedAtTo !== undefined && !Number.isFinite(payload.reviewedAtTo)) {
+        throw 'INVALID_LIST_TASKS_REVIEWED_AT_TO'
+    }
+
+    if (payload.reviewedAtFrom !== undefined && payload.reviewedAtTo !== undefined && payload.reviewedAtFrom > payload.reviewedAtTo) {
+        throw 'INVALID_LIST_TASKS_REVIEWED_AT_RANGE'
+    }
+
+    // Get task IDs
+    const taskIndexKey = hasSubmitterId ? `tasks:index:submitter:${payload.submitterId}` : `tasks:index:approver:${payload.approverId}`
+
+    const taskIds = await getSortedSetMembers(taskIndexKey, payload.createdAtFrom, payload.createdAtTo)
+    const listTasksResponsePayload: ListTasksResponsePayload = []
+
+    // Load and filter tasks
+    for (const taskId of taskIds) {
+        let taskFields: Record<string, string>
+        try {
+            taskFields = await getHashAllFields(`tasks:${taskId}`)
+        } catch (error) {
+            if (error === 'NO_RECORD_FOUND') {
+                continue
+            }
+
+            throw error
+        }
+
+        if (taskFields.taskId !== taskId) {
+            continue
+        }
+
+        if (payload.submitterId !== undefined && taskFields.submitterId !== payload.submitterId) {
+            continue
+        }
+
+        if (payload.approverId !== undefined && taskFields.approverId !== payload.approverId) {
+            continue
+        }
+
+        if (payload.taskType !== undefined && taskFields.taskType !== payload.taskType) {
+            continue
+        }
+
+        if (payload.status !== undefined && taskFields.status !== payload.status) {
+            continue
+        }
+
+        const reviewedAt = taskFields.reviewedAt !== undefined ? Number(taskFields.reviewedAt) : undefined
+
+        if (payload.reviewedAtFrom !== undefined && (reviewedAt === undefined || reviewedAt < payload.reviewedAtFrom)) {
+            continue
+        }
+
+        if (payload.reviewedAtTo !== undefined && (reviewedAt === undefined || reviewedAt > payload.reviewedAtTo)) {
+            continue
+        }
+
+        // Build the task result
+        const taskServiceResultPayload: TaskServiceResultPayload = {
+            taskId: taskFields.taskId,
+            taskType: taskFields.taskType as TaskType,
+            status: taskFields.status as TaskStatus,
+
+            submitterId: taskFields.submitterId,
+            approverId: taskFields.approverId,
+            observerId: taskFields.observerId,
+
+            title: taskFields.title,
+            details: JSON.parse(taskFields.details) as TaskDetails,
+
+            createdAt: Number(taskFields.createdAt),
+            updatedAt: Number(taskFields.updatedAt)
+        }
+
+        // Add optional fields
+        if (taskFields.description !== undefined) {
+            taskServiceResultPayload.description = taskFields.description
+        }
+
+        if (reviewedAt !== undefined) {
+            taskServiceResultPayload.reviewedAt = reviewedAt
+        }
+
+        if (taskFields.reviewComment !== undefined) {
+            taskServiceResultPayload.reviewComment = taskFields.reviewComment
+        }
+
+        listTasksResponsePayload.push(taskServiceResultPayload)
+    }
+
+    return { res: 'success', msg: 'TASKS_LISTED', responseName: 'taskListed', payload: listTasksResponsePayload }
 }
