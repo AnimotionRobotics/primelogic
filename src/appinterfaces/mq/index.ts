@@ -5,7 +5,7 @@
 import { ackMessage, connectMessageQueue, disconnectMessageQueue } from "@modules/mq"
 import { createStreamGroup } from '@modules/mq'
 import { allowConsuming, setAllowConsume } from '@modules/mq'
-import { getMessageFromMq, callServiceForJobMessage, dispatchServiceResultToMq, onMessageQueueClose, onMessageQueueConnect } from './handlers'
+import { onGetMessage, onCallService, onDispatchResponse, onMessageQueueClose, onMessageQueueConnect } from './handlers'
 import type { MessageQueueConsumerConfig } from './handlers'
 
 
@@ -58,7 +58,7 @@ export const initConsumingMessageQueue = async (config: MessageQueueConsumerConf
 
     while (allowConsuming) {
         // step 1: get message from mq
-        const messageFromMqResult = await getMessageFromMq(config)
+        const messageFromMqResult = await onGetMessage(config)
 
         if (messageFromMqResult.nextStep === 'stop') {
             break
@@ -71,20 +71,22 @@ export const initConsumingMessageQueue = async (config: MessageQueueConsumerConf
         const consumedJobMessage = messageFromMqResult.message
 
         // step 2: call service
-        const serviceCallResult = await callServiceForJobMessage(consumedJobMessage, config)
+        const serviceCallResult = await onCallService(consumedJobMessage, config)
 
         if (serviceCallResult.nextStep === 'continue') {
             continue
         }
 
         // step 3: push result back to mq
-        const responseDispatchResult = await dispatchServiceResultToMq(consumedJobMessage, serviceCallResult.serviceResult, config)
+        const responseDispatchResult = await onDispatchResponse(consumedJobMessage, serviceCallResult.serviceResult, config)
 
         // step 4: ack source message after response is sent
         try {
             const ackCount = await ackMessage(config.streamKey, config.groupName, consumedJobMessage.streamMessageId)
 
-            if (ackCount !== 1) throw 'FAILED_ACK_SOURCE_MESSAGE'
+            if (ackCount !== 1) {
+                throw 'FAILED_ACK_SOURCE_MESSAGE'
+            }
 
             console.info('Source message acked: ', {
                 sourceStreamMessageId: consumedJobMessage.streamMessageId,

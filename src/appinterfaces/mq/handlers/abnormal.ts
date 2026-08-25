@@ -1,9 +1,9 @@
 /**
  * All Abnormal Situation should be Handled by functions here
  */
-import type { ConsumedJobMessage } from '@/commontypes/messageType'
+import type { ConsumedJobMessage } from '@commontypes/messageType'
 import type { ServiceCallResult } from '@services'
-import type { GetMessageError } from '@/modules/mq'
+import { ackMessage, appendStreamMessage, type GetMessageError } from '@modules/mq'
 
 const dlqGetMessageErrorCodes: string[] = [
     'INVALID_STREAM_FIELDS',
@@ -15,8 +15,6 @@ const dlqGetMessageErrorCodes: string[] = [
     'INVALID_JOB_NAME',
     'INVALID_JOB_PAYLOAD'
 ]
-
-
 /**
  * Handler for failure situation of getting message from redis stream
  */
@@ -74,4 +72,46 @@ export const onGetJsonError = (e: string, payload: string) => {
     // possible e: JSON_RESULT_EMPTY
     // possible e: JSON_RESULT_MULTI
 
+}
+
+
+
+
+export type DeadLetterParams = {
+    dlqStreamKey: string,
+    sourceStreamKey: string,
+    sourceGroupName: string,
+    sourceStreamMessageId: string,
+    sourceJobId?: string,
+    errorCode: string
+}
+// Move source message to DLQ first, then ack it and return the DLQ stream message ID
+export const onDlqError = async (dlqParams: DeadLetterParams): Promise<string> => {
+    const deadLetterFields = [
+        'sourceStreamKey', dlqParams.sourceStreamKey,
+        'sourceStreamMessageId', dlqParams.sourceStreamMessageId,
+        'errorCode', dlqParams.errorCode,
+        'createdAt', Date.now().toString()
+    ]
+
+    if (dlqParams.sourceJobId) {
+        deadLetterFields.push('sourceJobId', dlqParams.sourceJobId)
+    }
+
+    const dlqStreamMessageId = await appendStreamMessage(dlqParams.dlqStreamKey, deadLetterFields)
+
+    const ackCount = await ackMessage(dlqParams.sourceStreamKey, dlqParams.sourceGroupName, dlqParams.sourceStreamMessageId)
+
+    if (ackCount !== 1) {
+        throw 'FAILED_ACK_DEAD_LETTER_MESSAGE'
+    }
+
+    console.warn('Source message moved to DLQ and acked: ', {
+        dlqStreamMessageId,
+        sourceStreamMessageId: dlqParams.sourceStreamMessageId,
+        sourceJobId: dlqParams.sourceJobId,
+        errorCode: dlqParams.errorCode
+    })
+
+    return dlqStreamMessageId
 }

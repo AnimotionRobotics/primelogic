@@ -1,11 +1,11 @@
 /**
  * Message Queue Handlers
  */
+import { setAllowConsume } from '@modules/mq'
+
 export { onGetMessageError, onMaxRetryReached, onJobMsgNameMissing } from './abnormal'
-export { getMessageFromMq } from './getMessageFromMq'
-export type { MessageQueueConsumerConfig } from './getMessageFromMq'
-export { callServiceForJobMessage } from './callServiceForJobMessage'
-export { dispatchServiceResultToMq } from './dispatchServiceResultToMq'
+export { onGetMessage, onCallService, onDispatchResponse } from './consumption'
+export type { MessageQueueConsumerConfig } from './consumption'
 
 
 
@@ -19,7 +19,6 @@ export const onMessageQueueConnect = async (): Promise<void> => {
 
 
 
-export const onMessageQueueClose = (): void => {
-    // TODO - confirm if extra action should be taken
-    // console.log('closed Message Queue connection!')
+export const onMessageQueueClose = async (): Promise<void> => {
+    await setAllowConsume(false)
 }
