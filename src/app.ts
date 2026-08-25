@@ -4,7 +4,7 @@
  * @date 12 May 2026
  * @license None, but strictly constrained to internal use only
  */
-import { SIGINT_HANDLER, SIGTERM_HANDLER, UNCAUGHT_EXCEPTION_HANDLER, APP_START_HANDLER, APP_ERROR_HANDLER } from "./apphandlers/index"
+import { SIGINT_HANDLER, SIGTERM_HANDLER, UNCAUGHT_EXCEPTION_HANDLER, APP_START_HANDLER, APP_ERROR_HANDLER } from "@apphandlers"
 
 process.once('SIGINT', SIGINT_HANDLER)
 process.once('SIGTERM', SIGTERM_HANDLER)

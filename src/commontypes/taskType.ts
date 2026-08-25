@@ -1,4 +1,4 @@
-import type { CreateLeaveTaskPayload, LeaveTaskDetails, UpdateLeaveTaskPayload } from '@/commontypes/leaveTaskType'
+import type { CreateLeaveTaskPayload, LeaveTaskDetails, UpdateLeaveTaskPayload } from '@commontypes/leaveTaskType'
 
 export type TaskType = 'leave'
 

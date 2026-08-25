@@ -4,8 +4,8 @@
  * @date 5 June 2026
  */
 import { RedisClient } from 'bun'
-import { supportedJobNames } from '@/commontypes/messageType'
-import type { ConsumedJobMessage, JobName, JobPayload } from '@/commontypes/messageType'
+import { supportedJobNames } from '@commontypes/messageType'
+import type { ConsumedJobMessage, JobName, JobPayload } from '@commontypes/messageType'
 
 export let allowConsuming: boolean = false
 export let messageQueueClient: RedisClient | null = null

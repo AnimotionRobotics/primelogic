@@ -1,4 +1,4 @@
-import type { AddFileToTaskPayload, CreateTaskPayload, ReviewTaskPayload, TaskResponsePayload, UpdateTaskPayload} from '@commontypes/taskType';
+import type { AddFileToTaskPayload, CreateTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskResponsePayload } from '@commontypes/taskType';
 
 export const supportedJobNames = ['addFileToTask', 'createTask', 'reviewTask', 'updateTask'] as const
 
