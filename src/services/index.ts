@@ -1,16 +1,10 @@
 /**
  * All Business Logics should be accomplished by calling modules or 3rd party APIs in here
  */
-import { addFileToTask, createTask, reviewTask, updateTask } from './tasks'
-import type { HandlerResult } from './tasks'
-import type { JobName, JobPayload, ResponseName } from '@/commontypes/messageType'
-import type { TaskResponsePayload } from '@commontypes/taskType'
-
-export { addFileToTask, createTask, reviewTask, updateTask}
-
-export type ServiceFunction = ( payload: JobPayload, requestJobId: string ) => Promise<HandlerResult>
-
-const serviceFunctions: Record<JobName, ServiceFunction> = { addFileToTask, createTask, reviewTask, updateTask}
+import { addFileToTask, createTask, reviewTask, updateTask } from './task'
+import type { HandlerResult } from './taskServiceType'
+import type { JobName, JobPayload, ResponseName } from '@commontypes/messageType'
+import type { CreateTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskResponsePayload } from '@commontypes/taskType'
 
 
 /**
@@ -34,19 +28,33 @@ export const onServiceFunctionFailure = (data: object) => {
 export type ServiceCallResult = { err: boolean, ack: boolean, msg?: string, responseName?: ResponseName, payload?: TaskResponsePayload }
 export const serviceRoute = async (funcName: JobName, payload: JobPayload, requestJobId: string): Promise<ServiceCallResult> => {
 
-
-    if (!funcName) throw 'MISSING_PARAMETER_FUNCNAME'
-    if (!payload) throw 'MISSING_PARAMETER_PAYLOAD'
-    if (!requestJobId) throw 'MISSING_PARAMETER_REQUEST_JOB_ID'
-
-    const serviceFunction = serviceFunctions[funcName]
-
-    if (!serviceFunction) {
-        throw 'SERVICE_FUNCTION_NOT_FOUND'
+    if (!funcName) {
+        throw 'MISSING_PARAMETER_FUNCNAME'
     }
 
-    // call actual service function according to funcName
-    const handlerResult = await serviceFunction(payload, requestJobId)
+    if (!payload) {
+        throw 'MISSING_PARAMETER_PAYLOAD'
+    }
+
+    if (!requestJobId) {
+        throw 'MISSING_PARAMETER_REQUEST_JOB_ID'
+    }
+
+    if (typeof payload !== 'object') {
+        throw 'INVALID_PARAMETER_PAYLOAD'
+    }
+
+    let handlerResult: HandlerResult | null = null
+
+    // Call service according to funcName
+    handlerResult = funcName === 'addFileToTask' ? await addFileToTask(payload) : handlerResult
+    handlerResult = funcName === 'createTask' ? await createTask(payload as CreateTaskPayload, requestJobId) : handlerResult
+    handlerResult = funcName === 'reviewTask' ? await reviewTask(payload as ReviewTaskPayload) : handlerResult
+    handlerResult = funcName === 'updateTask' ? await updateTask(payload as UpdateTaskPayload) : handlerResult
+
+    if (!handlerResult) {
+        throw 'SERVICE_FUNCTION_NOT_FOUND'
+    }
 
     // retry + xnack ?
     if (handlerResult.res === 'fail') {
