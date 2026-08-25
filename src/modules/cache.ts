@@ -259,6 +259,7 @@ export const getHashFields = async (key: string, fields: string[]): Promise<(str
  */
 export const getHashAllFields = async (key: string) => {
 
+	if (!cacheClient) throw 'CACHE_CLIENT_NOT_INITIALIZED'
     if (!key) throw 'MISSING_PARAMETER_KEY'
 
     let res
@@ -438,6 +439,7 @@ export const popSetMember = async (key: string): Promise<string | null> => {
 export const setJson = async (key: string, data: object, path?: string) => {
 
     //check if data is valid
+	if (!cacheClient) throw 'CACHE_CLIENT_NOT_INITIALIZED'
     if (!key) throw 'MISSING_PARAMETER:KEY'
     if (!data) throw 'MISSING_PARAMETER:DATA'
     if (typeof key !== 'string') throw 'INVALID_PARAMETER:KEY'
@@ -466,6 +468,7 @@ export const setJson = async (key: string, data: object, path?: string) => {
  */
 export const getJson = async (key: string, path?: string) => {
 
+	if (!cacheClient) throw 'CACHE_CLIENT_NOT_INITIALIZED'
     if (!key) throw 'MISSING_PARAMETER:KEY'
 
     let queryPath = path || '$'
@@ -504,4 +507,55 @@ export const deleteHashFields  = async (key: string, fields:string[]): Promise<v
 	} catch {
 		throw 'DELETE_HASH_FIELDS_FAILED'
 	}
+}
+
+
+
+
+// Add one member to a sorted set with its score
+export const addSortedSetMember = async (key: string, score: number, member: string): Promise<void> => {
+
+	if (!cacheClient) throw 'CACHE_CLIENT_NOT_INITIALIZED'
+	if (!key) throw 'CACHE_KEY_REQUIRED'
+	if (typeof key !== 'string') throw 'CACHE_KEY_MUST_BE_STRING'
+	if (!Number.isFinite(score)) throw 'SORTED_SET_SCORE_MUST_BE_FINITE_NUMBER'
+	if (!member) throw 'SORTED_SET_MEMBER_REQUIRED'
+	if (typeof member !== 'string') throw 'SORTED_SET_MEMBER_MUST_BE_STRING'
+
+	try {
+		await cacheClient.zadd(key, score, member)
+	} catch (error) {
+		throw 'ADD_SORTED_SET_MEMBER_FAILED'
+	}
+}
+
+
+
+
+// Get sorted set members within an optional score range, newest first
+export const getSortedSetMembers = async (key: string, scoreFrom?: number, scoreTo?: number): Promise<string[]> => {
+	if (!cacheClient) throw 'CACHE_CLIENT_NOT_INITIALIZED'
+	if (!key) throw 'CACHE_KEY_REQUIRED'
+	if (typeof key !== 'string') throw 'CACHE_KEY_MUST_BE_STRING'
+	if (scoreFrom !== undefined && !Number.isFinite(scoreFrom)) throw 'SORTED_SET_SCORE_FROM_MUST_BE_FINITE_NUMBER'
+	if (scoreTo !== undefined && !Number.isFinite(scoreTo)) throw 'SORTED_SET_SCORE_TO_MUST_BE_FINITE_NUMBER'
+	if (scoreFrom !== undefined && scoreTo !== undefined && scoreFrom > scoreTo) throw 'INVALID_SORTED_SET_SCORE_RANGE'
+
+	const minScore = scoreFrom ?? '-inf'
+	const maxScore = scoreTo ?? '+inf'
+
+	let members: string[]
+	try {
+		// REV requires the maximum score before the minimum score, return the result by score from high to low
+		members = await cacheClient.zrange(key, maxScore, minScore, 'BYSCORE', 'REV')
+	} catch (error) {
+		throw 'GET_SORTED_SET_MEMBERS_FAILED'
+	}
+
+	if (!Array.isArray(members)) {
+		throw 'INVALID_SORTED_SET_MEMBERS_RESULT'
+
+	}
+
+	return members
 }
