@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test'
 import * as cacheModule from '@modules/cache'
+import * as organizationModule from '@modules/organization'
 import { addFileToTask, createTask, listTasks, reviewTask, updateTask } from '@services/task'
 import type { AddFileToTaskPayload, CreateTaskPayload, ListTasksPayload, ReviewTaskPayload, UpdateTaskPayload } from '@commontypes/taskType'
 
@@ -86,8 +87,8 @@ describe('createTask', () => {
         status: 'PENDING',
         sourceJobId: 'create-job-1',
         submitterId: 'U0AMWQX3CQG',
-        approverId: 'U0BJR2NMZ6D',
-        observerId: 'U0BJR2NMZ6D',
+        approverIds: JSON.stringify(['U0BJR2NMZ6D']),
+        observerIds: JSON.stringify(['U0BJR2NMZ6D']),
         title: 'Annual leave',
         description: 'Family trip',
         details: JSON.stringify(createTaskPayload.details),
@@ -98,6 +99,29 @@ describe('createTask', () => {
     it('creates and saves a new task', async () => {
         vi.spyOn(Date, 'now').mockReturnValue(1000)
         vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
+        vi.spyOn(organizationModule, 'getEmployee').mockResolvedValue({
+            slackUserId: 'U0AMWQX3CQG',
+            name: 'Submitter',
+            departmentId: 'R&D',
+            isActive: true,
+            createdAt: 100,
+            updatedAt: 100
+        })
+        vi.spyOn(organizationModule, 'getDepartmentConfig')
+            .mockResolvedValueOnce({
+                departmentId: 'R&D',
+                departmentName: 'Research and Development',
+                adminSlackUserId: 'U0BJR2NMZ6D',
+                createdAt: 100,
+                updatedAt: 100
+            })
+            .mockResolvedValueOnce({
+                departmentId: 'HR',
+                departmentName: 'Human Resources',
+                adminSlackUserId: 'U0HRADMIN',
+                createdAt: 100,
+                updatedAt: 100
+            })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
         const addSortedSetMemberSpy = vi.spyOn(cacheModule, 'addSortedSetMember').mockResolvedValue(undefined)
         const taskId = Bun.hash('task:create-job-1').toString()
@@ -110,8 +134,8 @@ describe('createTask', () => {
             status: 'PENDING',
             sourceJobId: 'create-job-1',
             submitterId: 'U0AMWQX3CQG',
-            approverId: 'U0BJR2NMZ6D',
-            observerId: 'U0BJR2NMZ6D',
+            approverIds: JSON.stringify(['U0BJR2NMZ6D']),
+            observerIds: JSON.stringify(['U0HRADMIN']),
             title: 'Annual leave',
             description: 'Family trip',
             details: JSON.stringify(createTaskPayload.details),
@@ -129,8 +153,8 @@ describe('createTask', () => {
                 taskType: 'leave',
                 status: 'PENDING',
                 submitterId: 'U0AMWQX3CQG',
-                approverId: 'U0BJR2NMZ6D',
-                observerId: 'U0BJR2NMZ6D',
+                approverIds: ['U0BJR2NMZ6D'],
+                observerIds: ['U0HRADMIN'],
                 title: 'Annual leave',
                 description: 'Family trip',
                 details: createTaskPayload.details,
@@ -156,8 +180,8 @@ describe('createTask', () => {
                 taskType: 'leave',
                 status: 'PENDING',
                 submitterId: 'U0AMWQX3CQG',
-                approverId: 'U0BJR2NMZ6D',
-                observerId: 'U0BJR2NMZ6D',
+                approverIds: ['U0BJR2NMZ6D'],
+                observerIds: ['U0BJR2NMZ6D'],
                 title: 'Annual leave',
                 description: 'Family trip',
                 details: createTaskPayload.details,
@@ -185,6 +209,7 @@ describe('createTask', () => {
 
     it('returns an error when no task assignment exists', async () => {
         const getHashSpy = vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
+        const getEmployeeSpy = vi.spyOn(organizationModule, 'getEmployee').mockRejectedValue('NO_RECORD_FOUND')
 
         const result = await createTask({
             ...createTaskPayload,
@@ -193,6 +218,7 @@ describe('createTask', () => {
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' })
         expect(getHashSpy).toHaveBeenCalledWith(`tasks:${Bun.hash('task:create-job-1').toString()}`)
+        expect(getEmployeeSpy).toHaveBeenCalledWith('unknown-user')
     })
 
     it('throws when the leave time range is invalid', async () => {
@@ -225,8 +251,8 @@ describe('reviewTask', () => {
         status: 'PENDING',
         sourceJobId: 'create-job-1',
         submitterId: 'U0AMWQX3CQG',
-        approverId: 'U0BJR2NMZ6D',
-        observerId: 'U0BJR2NMZ6D',
+        approverIds: JSON.stringify(['U0BJR2NMZ6D']),
+        observerIds: JSON.stringify(['U0BJR2NMZ6D']),
         title: 'Annual leave',
         description: 'Family trip',
         details: JSON.stringify({
@@ -260,8 +286,8 @@ describe('reviewTask', () => {
                 taskType: 'leave',
                 status: 'APPROVED',
                 submitterId: 'U0AMWQX3CQG',
-                approverId: 'U0BJR2NMZ6D',
-                observerId: 'U0BJR2NMZ6D',
+                approverIds: ['U0BJR2NMZ6D'],
+                observerIds: ['U0BJR2NMZ6D'],
                 title: 'Annual leave',
                 description: 'Family trip',
                 details: {
@@ -359,8 +385,8 @@ describe('updateTask', () => {
         status: 'APPROVED',
         sourceJobId: 'create-job-1',
         submitterId: 'U0AMWQX3CQG',
-        approverId: 'U0BJR2NMZ6D',
-        observerId: 'U0BJR2NMZ6D',
+        approverIds: JSON.stringify(['U0BJR2NMZ6D']),
+        observerIds: JSON.stringify(['U0BJR2NMZ6D']),
         title: 'Annual leave',
         description: 'Family trip',
         details: JSON.stringify({
@@ -399,8 +425,8 @@ describe('updateTask', () => {
                 taskType: 'leave',
                 status: 'PENDING',
                 submitterId: 'U0AMWQX3CQG',
-                approverId: 'U0BJR2NMZ6D',
-                observerId: 'U0BJR2NMZ6D',
+                approverIds: ['U0BJR2NMZ6D'],
+                observerIds: ['U0BJR2NMZ6D'],
                 title: 'Updated annual leave',
                 description: 'Updated family trip',
                 details: updateTaskPayload.details,
@@ -496,8 +522,8 @@ describe('listTasks', () => {
         status: 'PENDING',
         sourceJobId: 'create-job-1',
         submitterId,
-        approverId,
-        observerId: approverId,
+        approverIds: JSON.stringify([approverId]),
+        observerIds: JSON.stringify([approverId]),
         title: 'Annual leave',
         description: 'Family trip',
         details: JSON.stringify(taskDetails),
@@ -536,8 +562,8 @@ describe('listTasks', () => {
                     taskType: 'leave',
                     status: 'APPROVED',
                     submitterId,
-                    approverId,
-                    observerId: approverId,
+                    approverIds: [approverId],
+                    observerIds: [approverId],
                     title: 'Approved annual leave',
                     description: 'Family trip',
                     details: taskDetails,
@@ -551,8 +577,8 @@ describe('listTasks', () => {
                     taskType: 'leave',
                     status: 'PENDING',
                     submitterId,
-                    approverId,
-                    observerId: approverId,
+                    approverIds: [approverId],
+                    observerIds: [approverId],
                     title: 'Annual leave',
                     description: 'Family trip',
                     details: taskDetails,

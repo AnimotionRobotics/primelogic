@@ -58,8 +58,8 @@ export type ListTasksPayload = ListTasksBySubmitterPayload | ListTasksByApprover
 export type TaskAssignment = {
     taskType: TaskType,
     submitterId: string,
-    approverId: string,
-    observerId: string
+    approverIds: string[],
+    observerIds: string[]
 }
 
 export type TaskRecord = {
@@ -70,8 +70,8 @@ export type TaskRecord = {
     sourceJobId: string,
 
     submitterId: string,
-    approverId: string,
-    observerId: string,
+    approverIds: string[],
+    observerIds: string[],
 
     title: string,
     description?: string,
@@ -90,8 +90,8 @@ export type TaskServiceResultPayload = {
     status: TaskStatus,
 
     submitterId: string,
-    approverId: string,
-    observerId: string,
+    approverIds: string[],
+    observerIds: string[],
 
     title: string,
     description?: string,

@@ -1,8 +1,9 @@
 import { addSortedSetMember, deleteHashFields, getHashAllFields, getSortedSetMembers, setHash } from '@modules/cache'
+import { getDepartmentConfig, getEmployee } from '@modules/organization'
 import type { ResponseName } from '@commontypes/messageType'
 import { supportedTaskStatuses, supportedTaskTypes} from '@commontypes/taskType'
 import type { CreateTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskDetails, TaskRecord, TaskServiceResultPayload, TaskStatus, TaskType, ListTasksPayload, ListTasksResponsePayload} from '@commontypes/taskType'
-import { taskAssignments, validateLeaveTaskDetails } from './taskSupport'
+import { taskObserverDepartmentIds, validateLeaveTaskDetails } from './taskSupport'
 import type { HandlerResult, TaskDetailsValidator } from './taskSupport'
 
 // Add one file to selected tasks
@@ -122,6 +123,9 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
 
     // Return the existing task for the same request
     if (existingTaskFields) {
+        const existingApproverIds = JSON.parse(existingTaskFields.approverIds) as string[]
+        const existingObserverIds = JSON.parse(existingTaskFields.observerIds) as string[]
+
         // Build the response with saved task fields
         const existingTaskServiceResultPayload: TaskServiceResultPayload = {
             taskId: existingTaskFields.taskId,
@@ -129,8 +133,8 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
             status: existingTaskFields.status as TaskStatus,
 
             submitterId: existingTaskFields.submitterId,
-            approverId: existingTaskFields.approverId,
-            observerId: existingTaskFields.observerId,
+            approverIds: existingApproverIds,
+            observerIds: existingObserverIds,
 
             title: existingTaskFields.title,
             details: JSON.parse(existingTaskFields.details) as TaskDetails,
@@ -155,19 +159,58 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         // Add the task to both indexes again
         const existingTaskCreatedAt = Number(existingTaskFields.createdAt)
         const taskIndexSubmitterKey = `tasks:index:submitter:${existingTaskFields.submitterId}`
-        const taskIndexApproverKey = `tasks:index:approver:${existingTaskFields.approverId}`
 
         await addSortedSetMember(taskIndexSubmitterKey, existingTaskCreatedAt, existingTaskFields.taskId)
-        await addSortedSetMember(taskIndexApproverKey, existingTaskCreatedAt, existingTaskFields.taskId)
+
+        for (const approverId of existingApproverIds) {
+            const taskIndexApproverKey = `tasks:index:approver:${approverId}`
+            await addSortedSetMember(taskIndexApproverKey, existingTaskCreatedAt, existingTaskFields.taskId)
+        }
 
         return { res: 'success', msg: 'TASK_CREATED', responseName: 'taskCreated', payload: existingTaskServiceResultPayload }
     }
 
-    // Find the task assignment for a new task
-    const taskAssignmentKey = `${payload.taskType}:${payload.submitterId}`
-    const taskAssignment = taskAssignments[taskAssignmentKey]
-    if (!taskAssignment) {
+    // Load the submitter's department
+    let submitter
+    try {
+        submitter = await getEmployee(payload.submitterId)
+    } catch (error) {
+        if (error !== 'NO_RECORD_FOUND') throw error
         return { res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' }
+    }
+
+    if (!submitter.isActive) {
+        return { res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' }
+    }
+
+    // Load the approver from the submitter's department
+    let submitterDepartmentConfig
+    try {
+        submitterDepartmentConfig = await getDepartmentConfig(submitter.departmentId)
+    } catch (error) {
+        if (error !== 'NO_RECORD_FOUND') throw error
+        return { res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' }
+    }
+
+    const approverIds = [submitterDepartmentConfig.adminSlackUserId]
+    const observerIds = new Set<string>()
+
+    // Load observers
+    for (const observerDepartmentId of taskObserverDepartmentIds[payload.taskType]) {
+        let observerDepartmentConfig
+        try {
+            observerDepartmentConfig = await getDepartmentConfig(observerDepartmentId)
+        } catch (error) {
+            if (error !== 'NO_RECORD_FOUND') throw error
+            return { res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' }
+        }
+
+        observerIds.add(observerDepartmentConfig.adminSlackUserId)
+    }
+
+    // Remove approvers from observers
+    for (const approverId of approverIds) {
+        observerIds.delete(approverId)
     }
 
     // Build a new task
@@ -180,8 +223,8 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         sourceJobId: requestJobId,
 
         submitterId: payload.submitterId,
-        approverId: taskAssignment.approverId,
-        observerId: taskAssignment.observerId,
+        approverIds,
+        observerIds: [...observerIds],
 
         title: payload.title,
         description: payload.description,
@@ -200,8 +243,8 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         sourceJobId: taskRecord.sourceJobId,
 
         submitterId: taskRecord.submitterId,
-        approverId: taskRecord.approverId,
-        observerId: taskRecord.observerId,
+        approverIds: JSON.stringify(taskRecord.approverIds),
+        observerIds: JSON.stringify(taskRecord.observerIds),
 
         title: taskRecord.title,
         details: JSON.stringify(taskRecord.details),
@@ -218,10 +261,13 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
 
     // Add the task to submitter and approver indexes
     const taskIndexSubmitterKey = `tasks:index:submitter:${taskRecord.submitterId}`
-    const taskIndexApproverKey = `tasks:index:approver:${taskRecord.approverId}`
 
     await addSortedSetMember(taskIndexSubmitterKey, taskRecord.createdAt, taskRecord.taskId)
-    await addSortedSetMember(taskIndexApproverKey, taskRecord.createdAt, taskRecord.taskId)
+
+    for (const approverId of taskRecord.approverIds) {
+        const taskIndexApproverKey = `tasks:index:approver:${approverId}`
+        await addSortedSetMember(taskIndexApproverKey, taskRecord.createdAt, taskRecord.taskId)
+    }
 
     // Build the response
     const taskServiceResultPayload: TaskServiceResultPayload = {
@@ -230,8 +276,8 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         status: taskRecord.status,
 
         submitterId: taskRecord.submitterId,
-        approverId: taskRecord.approverId,
-        observerId: taskRecord.observerId,
+        approverIds: taskRecord.approverIds,
+        observerIds: taskRecord.observerIds,
 
         title: taskRecord.title,
         details: taskRecord.details,
@@ -332,8 +378,8 @@ export const updateTask = async (payload: UpdateTaskPayload): Promise<HandlerRes
         status: 'PENDING',
 
         submitterId: taskFields.submitterId,
-        approverId: taskFields.approverId,
-        observerId: taskFields.observerId,
+        approverIds: JSON.parse(taskFields.approverIds) as string[],
+        observerIds: JSON.parse(taskFields.observerIds) as string[],
 
         title: payload.title,
         details: payload.details,
@@ -392,7 +438,10 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
     }
 
     // Check review permission
-    if (payload.approverId !== taskFields.approverId) {
+    const approverIds = JSON.parse(taskFields.approverIds) as string[]
+    const observerIds = JSON.parse(taskFields.observerIds) as string[]
+
+    if (!approverIds.includes(payload.approverId)) {
         return { res: 'error', msg: 'TASK_REVIEW_FORBIDDEN' }
     }
 
@@ -428,8 +477,8 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
         status: reviewStatus,
 
         submitterId: taskFields.submitterId,
-        approverId: taskFields.approverId,
-        observerId: taskFields.observerId,
+        approverIds,
+        observerIds,
 
         title: taskFields.title,
         details: taskDetails,
@@ -491,7 +540,7 @@ export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResul
         throw 'INVALID_LIST_TASKS_REVIEWED_AT_RANGE'
     }
 
-    // Get task IDs
+    // Get taskIds
     const taskIndexKey = hasSubmitterId ? `tasks:index:submitter:${payload.submitterId}` : `tasks:index:approver:${payload.approverId}`
 
     const taskIds = await getSortedSetMembers(taskIndexKey, payload.createdAtFrom, payload.createdAtTo)
@@ -518,7 +567,10 @@ export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResul
             continue
         }
 
-        if (payload.approverId !== undefined && taskFields.approverId !== payload.approverId) {
+        const approverIds = JSON.parse(taskFields.approverIds) as string[]
+        const observerIds = JSON.parse(taskFields.observerIds) as string[]
+
+        if (payload.approverId !== undefined && !approverIds.includes(payload.approverId)) {
             continue
         }
 
@@ -547,8 +599,8 @@ export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResul
             status: taskFields.status as TaskStatus,
 
             submitterId: taskFields.submitterId,
-            approverId: taskFields.approverId,
-            observerId: taskFields.observerId,
+            approverIds,
+            observerIds,
 
             title: taskFields.title,
             details: JSON.parse(taskFields.details) as TaskDetails,

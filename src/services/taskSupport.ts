@@ -1,6 +1,6 @@
 import type { ResponseName } from '@commontypes/messageType'
 import { supportedLeaveTypes } from '@commontypes/leaveTaskType'
-import type { TaskAssignment, TaskDetails, TaskResponsePayload } from '@commontypes/taskType'
+import type { TaskDetails, TaskResponsePayload, TaskType } from '@commontypes/taskType'
 
 
 
@@ -15,21 +15,9 @@ export type HandlerResult = {
 }
 
 
-// Set the approver and observer for each submitter
-export const taskAssignments: Record<string, TaskAssignment> = {
-    'leave:U0AMWQX3CQG': {
-        taskType: 'leave',
-        submitterId: 'U0AMWQX3CQG',
-        approverId: 'U0BJR2NMZ6D',
-        observerId: 'U0BJR2NMZ6D'
-    },
-
-    'leave:U0BJR2NMZ6D': {
-        taskType: 'leave',
-        submitterId: 'U0BJR2NMZ6D',
-        approverId: 'U0AMWQX3CQG',
-        observerId: 'U0BJR2NMZ6D'
-    }
+// Set observer departments for each task type
+export const taskObserverDepartmentIds: Record<TaskType, string[]> = {
+    leave: ['HR']
 }
 
 
