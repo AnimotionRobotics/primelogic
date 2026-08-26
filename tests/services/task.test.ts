@@ -107,17 +107,17 @@ describe('createTask', () => {
             createdAt: 100,
             updatedAt: 100
         })
-        vi.spyOn(organizationModule, 'getDepartmentConfig')
+        vi.spyOn(organizationModule, 'getDepartment')
             .mockResolvedValueOnce({
                 departmentId: 'R&D',
-                departmentName: 'Research and Development',
+                name: 'Research and Development',
                 adminSlackUserId: 'U0BJR2NMZ6D',
                 createdAt: 100,
                 updatedAt: 100
             })
             .mockResolvedValueOnce({
                 departmentId: 'HR',
-                departmentName: 'Human Resources',
+                name: 'Human Resources',
                 adminSlackUserId: 'U0HRADMIN',
                 createdAt: 100,
                 updatedAt: 100

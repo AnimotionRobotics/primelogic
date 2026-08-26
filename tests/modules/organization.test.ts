@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test'
 import * as cacheModule from '@modules/cache'
-import { getDepartmentConfig, getEmployee, setDepartmentConfig, setEmployee } from '@modules/organization'
-import type { DepartmentConfig, Employee } from '@commontypes/organizationType'
+import { getDepartment, getEmployee, setDepartment, setEmployee } from '@modules/organization'
+import type { Department, Employee } from '@commontypes/organizationType'
 
 
 
@@ -57,40 +57,40 @@ describe('employee', () => {
 
 
 
-describe('department config', () => {
-    const departmentConfig: DepartmentConfig = {
+describe('department', () => {
+    const department: Department = {
         departmentId: 'engineering',
-        departmentName: 'Engineering',
+        name: 'Engineering',
         adminSlackUserId: 'U456',
         createdAt: 100,
         updatedAt: 200
     }
 
-    it('saves a department config', async () => {
+    it('saves a department', async () => {
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        await setDepartmentConfig(departmentConfig)
+        await setDepartment(department)
 
-        expect(setHashSpy).toHaveBeenCalledWith('departmentConfigs:engineering', {
+        expect(setHashSpy).toHaveBeenCalledWith('departments:engineering', {
             departmentId: 'engineering',
-            departmentName: 'Engineering',
+            name: 'Engineering',
             adminSlackUserId: 'U456',
             createdAt: '100',
             updatedAt: '200'
         })
     })
 
-    it('loads a department config', async () => {
+    it('loads a department', async () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
             departmentId: 'engineering',
-            departmentName: 'Engineering',
+            name: 'Engineering',
             adminSlackUserId: 'U456',
             createdAt: '100',
             updatedAt: '200'
         })
 
-        const result = await getDepartmentConfig('engineering')
+        const result = await getDepartment('engineering')
 
-        expect(result).toEqual(departmentConfig)
+        expect(result).toEqual(department)
     })
 })

@@ -7,9 +7,9 @@ export type Employee = {
     updatedAt: number
 }
 
-export type DepartmentConfig = {
+export type Department = {
     departmentId: string,
-    departmentName: string,
+    name: string,
     adminSlackUserId: string,
     createdAt: number,
     updatedAt: number

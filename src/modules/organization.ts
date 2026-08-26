@@ -1,4 +1,4 @@
-import type { DepartmentConfig, Employee } from '@commontypes/organizationType'
+import type { Department, Employee } from '@commontypes/organizationType'
 import { getHashAllFields, setHash } from '@modules/cache'
 
 
@@ -57,22 +57,22 @@ export const getEmployee = async (slackUserId: string): Promise<Employee> => {
 
 
 
-// Save a department config
-export const setDepartmentConfig = async (departmentConfig: DepartmentConfig): Promise<void> => {
+// Save a department record
+export const setDepartment = async (department: Department): Promise<void> => {
 
-    if (!departmentConfig) throw 'MISSING_PARAMETER_DEPARTMENT_CONFIG'
-    if (!departmentConfig.departmentId) throw 'MISSING_DEPARTMENT_ID'
-    if (!departmentConfig.departmentName) throw 'MISSING_DEPARTMENT_NAME'
-    if (!departmentConfig.adminSlackUserId) throw 'MISSING_DEPARTMENT_ADMIN_SLACK_USER_ID'
-    if (!Number.isFinite(departmentConfig.createdAt) || !Number.isFinite(departmentConfig.updatedAt)) throw 'INVALID_DEPARTMENT_CONFIG_TIME'
-    if (departmentConfig.updatedAt < departmentConfig.createdAt) throw 'INVALID_DEPARTMENT_CONFIG_TIME'
+    if (!department) throw 'MISSING_PARAMETER_DEPARTMENT'
+    if (!department.departmentId) throw 'MISSING_DEPARTMENT_ID'
+    if (!department.name) throw 'MISSING_DEPARTMENT_NAME'
+    if (!department.adminSlackUserId) throw 'MISSING_DEPARTMENT_ADMIN_SLACK_USER_ID'
+    if (!Number.isFinite(department.createdAt) || !Number.isFinite(department.updatedAt)) throw 'INVALID_DEPARTMENT_TIME'
+    if (department.updatedAt < department.createdAt) throw 'INVALID_DEPARTMENT_TIME'
 
-    await setHash(`departmentConfigs:${departmentConfig.departmentId}`, {
-        departmentId: departmentConfig.departmentId,
-        departmentName: departmentConfig.departmentName,
-        adminSlackUserId: departmentConfig.adminSlackUserId,
-        createdAt: departmentConfig.createdAt.toString(),
-        updatedAt: departmentConfig.updatedAt.toString()
+    await setHash(`departments:${department.departmentId}`, {
+        departmentId: department.departmentId,
+        name: department.name,
+        adminSlackUserId: department.adminSlackUserId,
+        createdAt: department.createdAt.toString(),
+        updatedAt: department.updatedAt.toString()
     })
 
 }
@@ -80,23 +80,23 @@ export const setDepartmentConfig = async (departmentConfig: DepartmentConfig): P
 
 
 
-// Load a department config
-export const getDepartmentConfig = async (departmentId: string): Promise<DepartmentConfig> => {
+// Load a department record
+export const getDepartment = async (departmentId: string): Promise<Department> => {
 
     if (!departmentId) throw 'MISSING_DEPARTMENT_ID'
 
-    const departmentConfigFields = await getHashAllFields(`departmentConfigs:${departmentId}`)
-    const createdAt = Number(departmentConfigFields.createdAt)
-    const updatedAt = Number(departmentConfigFields.updatedAt)
+    const departmentFields = await getHashAllFields(`departments:${departmentId}`)
+    const createdAt = Number(departmentFields.createdAt)
+    const updatedAt = Number(departmentFields.updatedAt)
 
-    if (departmentConfigFields.departmentId !== departmentId) throw 'INVALID_DEPARTMENT_CONFIG_RECORD'
-    if (!departmentConfigFields.departmentName || !departmentConfigFields.adminSlackUserId) throw 'INVALID_DEPARTMENT_CONFIG_RECORD'
-    if (!Number.isFinite(createdAt) || !Number.isFinite(updatedAt) || updatedAt < createdAt) throw 'INVALID_DEPARTMENT_CONFIG_RECORD'
+    if (departmentFields.departmentId !== departmentId) throw 'INVALID_DEPARTMENT_RECORD'
+    if (!departmentFields.name || !departmentFields.adminSlackUserId) throw 'INVALID_DEPARTMENT_RECORD'
+    if (!Number.isFinite(createdAt) || !Number.isFinite(updatedAt) || updatedAt < createdAt) throw 'INVALID_DEPARTMENT_RECORD'
 
     return {
-        departmentId: departmentConfigFields.departmentId,
-        departmentName: departmentConfigFields.departmentName,
-        adminSlackUserId: departmentConfigFields.adminSlackUserId,
+        departmentId: departmentFields.departmentId,
+        name: departmentFields.name,
+        adminSlackUserId: departmentFields.adminSlackUserId,
         createdAt,
         updatedAt
     }

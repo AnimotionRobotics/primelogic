@@ -1,5 +1,5 @@
 import { addSortedSetMember, deleteHashFields, getHashAllFields, getSortedSetMembers, setHash } from '@modules/cache'
-import { getDepartmentConfig, getEmployee } from '@modules/organization'
+import { getDepartment, getEmployee } from '@modules/organization'
 import type { ResponseName } from '@commontypes/messageType'
 import { supportedTaskStatuses, supportedTaskTypes} from '@commontypes/taskType'
 import type { CreateTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskDetails, TaskRecord, TaskServiceResultPayload, TaskStatus, TaskType, ListTasksPayload, ListTasksResponsePayload} from '@commontypes/taskType'
@@ -184,28 +184,28 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
     }
 
     // Load the approver from the submitter's department
-    let submitterDepartmentConfig
+    let submitterDepartment
     try {
-        submitterDepartmentConfig = await getDepartmentConfig(submitter.departmentId)
+        submitterDepartment = await getDepartment(submitter.departmentId)
     } catch (error) {
         if (error !== 'NO_RECORD_FOUND') throw error
         return { res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' }
     }
 
-    const approverIds = [submitterDepartmentConfig.adminSlackUserId]
+    const approverIds = [submitterDepartment.adminSlackUserId]
     const observerIds = new Set<string>()
 
     // Load observers
     for (const observerDepartmentId of taskObserverDepartmentIds[payload.taskType]) {
-        let observerDepartmentConfig
+        let observerDepartment
         try {
-            observerDepartmentConfig = await getDepartmentConfig(observerDepartmentId)
+            observerDepartment = await getDepartment(observerDepartmentId)
         } catch (error) {
             if (error !== 'NO_RECORD_FOUND') throw error
             return { res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' }
         }
 
-        observerIds.add(observerDepartmentConfig.adminSlackUserId)
+        observerIds.add(observerDepartment.adminSlackUserId)
     }
 
     // Remove approvers from observers
