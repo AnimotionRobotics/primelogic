@@ -18,10 +18,18 @@ export const connectCache = async (connString: string, handlers: { onCacheConnec
 	if (handlers.onCacheConnect && typeof handlers.onCacheConnect !== 'function') throw 'ON_CACHE_CONNECT_MUST_BE_FUNCTION'
 	if (handlers.onCacheClose && typeof handlers.onCacheClose !== 'function') throw 'ON_CACHE_CLOSE_MUST_BE_FUNCTION'
 
-    cacheClient = new RedisClient(connString)
-	// Attach event handlers
-	cacheClient.onconnect = handlers.onCacheConnect || null
-	cacheClient.onclose = handlers.onCacheClose || null
+	cacheClient = new RedisClient(connString)
+
+	// Add the connect handler when provided
+	if (handlers.onCacheConnect) {
+		cacheClient.onconnect = handlers.onCacheConnect
+	}
+
+	// Add the close handler when provided
+	if (handlers.onCacheClose) {
+		cacheClient.onclose = handlers.onCacheClose
+	}
+
 	try {
 		await cacheClient.connect()
 	} catch(err) {
