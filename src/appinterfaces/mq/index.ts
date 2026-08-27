@@ -7,6 +7,7 @@ import { createStreamGroup } from '@modules/mq'
 import { allowConsuming, setAllowConsume } from '@modules/mq'
 import { onGetMessage, onCallService, onDispatchResponse, onMessageQueueClose, onMessageQueueConnect } from './handlers'
 import type { MessageQueueConsumerConfig } from './handlers'
+import { logEvent } from '@modules/logger'
 
 
 
@@ -21,29 +22,12 @@ export { disconnectMessageQueue, setAllowConsume }
 export const initMessageQueue = async (redisConnectionString: string, config: {targetStreamKey: string, targetStreamConsumerGroup: string, listenStreamKey: string, listenStreamConsumerGroup: string}) => {
 
     // step 1: connect to redis server
-    try {
-        await connectMessageQueue(redisConnectionString, { onMessageQueueConnect, onMessageQueueClose })
-        setAllowConsume(true)
-        // console.log('set setAllowConsume', true)
-    } catch (e) {
-        console.error('Failed connect to message queue: ', e)
-        throw e
-    }
-
+    await connectMessageQueue(redisConnectionString, { onMessageQueueConnect, onMessageQueueClose })
+    setAllowConsume(true)
 
     // step 2: prepare stream with consumer group
-    try {
-        await createStreamGroup(config.targetStreamKey, config.targetStreamConsumerGroup)
-        await createStreamGroup(config.listenStreamKey, config.listenStreamConsumerGroup)
-    } catch (e: any) {
-        if (e.message && e.message.includes('BUSYGROUP Consumer Group name already exists')) {
-            console.log('Consumer Group name already exists')
-        } else {
-            console.error('Error when createStreamGroup()', e)
-        }
-        throw e
-    }
-
+    await createStreamGroup(config.targetStreamKey, config.targetStreamConsumerGroup)
+    await createStreamGroup(config.listenStreamKey, config.listenStreamConsumerGroup)
 }
 
 
@@ -88,17 +72,25 @@ export const initConsumingMessageQueue = async (config: MessageQueueConsumerConf
                 throw 'FAILED_ACK_SOURCE_MESSAGE'
             }
 
-            console.info('Source message acked: ', {
+            logEvent('info', 'mq.source.acked', {
+                sourceStreamKey: config.streamKey,
+                sourceGroupName: config.groupName,
                 sourceStreamMessageId: consumedJobMessage.streamMessageId,
                 requestJobId: consumedJobMessage.jobId,
+                jobName: consumedJobMessage.name,
+                sourceAckCount: ackCount,
                 responseId: responseDispatchResult.responseId
             })
         } catch (ackError) {
-            console.error('Failed to ack source message: ', {
-                error: ackError,
+            logEvent('error', 'mq.source.ack_failed', {
+                sourceStreamKey: config.streamKey,
+                sourceGroupName: config.groupName,
                 sourceStreamMessageId: consumedJobMessage.streamMessageId,
                 requestJobId: consumedJobMessage.jobId,
-                responseId: responseDispatchResult.responseId
+                jobName: consumedJobMessage.name,
+                responseId: responseDispatchResult.responseId,
+                errorCode: typeof ackError === 'string' ? ackError : 'SOURCE_ACK_FAILED',
+                errorMessage: ackError instanceof Error ? ackError.message : undefined
             })
             throw ackError
         }

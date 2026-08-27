@@ -3,7 +3,10 @@
  */
 import type { ConsumedJobMessage } from '@commontypes/messageType'
 import type { ServiceCallResult } from '@services'
-import { ackMessage, appendStreamMessage, type GetMessageError } from '@modules/mq'
+import type { GetMessageError } from '@modules/mq'
+import { ackMessage, appendStreamMessage } from '@modules/mq'
+import { logEvent } from '@modules/logger'
+
 
 const dlqGetMessageErrorCodes: string[] = [
     'INVALID_STREAM_FIELDS',
@@ -106,12 +109,54 @@ export const onDlqError = async (dlqParams: DeadLetterParams): Promise<string> =
         throw 'FAILED_ACK_DEAD_LETTER_MESSAGE'
     }
 
-    console.warn('Source message moved to DLQ and acked: ', {
+    logEvent('warn', 'mq.source.moved_to_dlq', {
+        dlqStreamKey: dlqParams.dlqStreamKey,
         dlqStreamMessageId,
+        sourceStreamKey: dlqParams.sourceStreamKey,
+        sourceGroupName: dlqParams.sourceGroupName,
         sourceStreamMessageId: dlqParams.sourceStreamMessageId,
         sourceJobId: dlqParams.sourceJobId,
-        errorCode: dlqParams.errorCode
+        errorCode: dlqParams.errorCode,
+        sourceAckCount: ackCount
     })
 
     return dlqStreamMessageId
+}
+
+
+
+const retryableResponseDispatchErrorCodes: string[] = [
+    // Cache error
+    'SET_HASH_FAILED',
+    // Bun Redis connection error
+    'ERR_REDIS_CONNECTION_CLOSED',
+    // Network errors
+    'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE',
+    'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH',
+    // Redis temporary errors
+    'BUSY', 'TRYAGAIN', 'LOADING'
+]
+// Check whether a response dispatch error can be retried
+export const onDispatchResponseError = (errorCode: string | undefined, errorMessage: string): boolean => {
+    const canRetry = retryableResponseDispatchErrorCodes.some(
+        retryableCode => errorCode === retryableCode || errorMessage.startsWith(retryableCode)
+    )
+
+    return canRetry
+}
+
+
+
+
+const retryableServiceErrorCodes: string[] = [
+    'ERROR_GET_ALL_HASH_FIELDS',
+    'SET_HASH_FAILED',
+    'DELETE_HASH_FIELDS_FAILED',
+    'ADD_SORTED_SET_MEMBER_FAILED',
+    'GET_SORTED_SET_MEMBERS_FAILED'
+]
+// Check whether a service error can be retried
+export const onCallServiceError = (error: unknown): boolean => {
+    const canRetry = typeof error === 'string' && retryableServiceErrorCodes.includes(error)
+    return canRetry
 }

@@ -4,8 +4,6 @@
  * @date 5 June 2026
  */
 import { RedisClient } from 'bun'
-import { supportedJobNames } from '@commontypes/messageType'
-import type { ConsumedJobMessage, JobName, JobPayload } from '@commontypes/messageType'
 
 export let allowConsuming: boolean = false
 export let messageQueueClient: RedisClient | null = null
@@ -109,15 +107,12 @@ export const createStreamGroup = async (streamKey: string, consumerGroupName: st
     if (groups && Array.isArray(groups)) {
         groupExists = groups.some((group: any) => {
             // XINFO GROUPS returns array of arrays: [['name', 'groupName', ...], ...]
-            // or array of objects depending on Redis client
-            // if (Array.isArray(group)) {
-            //     const nameIndex = group.indexOf('name')
-            //     return nameIndex !== -1 && group[nameIndex + 1] === consumerGroupName
-            // }
-            // return group?.name === consumerGroupName
-            Array.isArray(group) ?
-                groupExists = group.indexOf('name') !== -1 && group[group.indexOf('name') + 1] === consumerGroupName :
-                group?.name === consumerGroupName
+            if(Array.isArray(group)){
+                const nameIndex = group.indexOf('name')
+                return nameIndex !== -1 && group[nameIndex + 1]  === consumerGroupName
+            }
+
+            return group?.name === consumerGroupName
         })
     }
     if (groupExists) { return }
@@ -144,29 +139,18 @@ export const createStreamGroup = async (streamKey: string, consumerGroupName: st
 /**
  * Add Data to Message Queue
  */
-export const dispatchMessage = async (responseStreamKey: string, responseId: string, cacheClient: RedisClient | null, responseMessageFields: string[]): Promise<void> => {
+export const dispatchMessage = async (responseStreamKey: string, responseId: string): Promise<void> => {
 
     if (!responseStreamKey) throw 'MISSING_PARAMETER_RESPONSE_STREAM_KEY'
     if (!responseId) throw 'MISSING_PARAMETER_RESPONSE_ID'
-    if (!cacheClient) throw 'MISSING_PARAMETER_CACHE_CLIENT'
-    if (!Array.isArray(responseMessageFields)) {
-        throw 'RESPONSE_MESSAGE_FIELDS_MUST_BE_ARRAY'
-    }
-    if (responseMessageFields.length === 0 || responseMessageFields.length % 2 !== 0) {
-        throw 'INVALID_RESPONSE_MESSAGE_FIELDS'
-    }
-
     if (!messageQueueClient) throw 'MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED'
-
-    // Save response
-    await cacheClient.hmset(`responses:${responseId}`, responseMessageFields)
 
     // Push response to mq
     await messageQueueClient.send('XADD', [
         responseStreamKey,
-        "MAXLEN", "~", "10000", "*",
-        "produced_time", Date.now().toString(),
-        "payload", responseId
+        'MAXLEN', '~', '10000', '*',
+        'produced_time', Date.now().toString(),
+        'payload', responseId
     ])
 }
 
@@ -186,13 +170,7 @@ export const dispatchMessage = async (responseStreamKey: string, responseId: str
  * @throws INVALID_STREAM_FIELDS
  * @throws INVALID_STREAM_FIELD
  * @throws MISSING_JOB_ID
- * @throws JOB_MESSAGE_NOT_FOUND
- * @throws INVALID_JOB_NUMBER_FIELD
- * @throws INVALID_JOB_CREATED_BY
- * @throws INVALID_JOB_NAME
- * @throws INVALID_JOB_PAYLOAD
  * @throws ERROR_GET_QUEUE_ITEM
- * @throws ERROR_WHEN_HGETALL_BY_KEY
  */
 
 
@@ -201,7 +179,13 @@ export type GetMessageError = {
     streamMessageId: string
     jobId?: string
 }
-export const getMessage = async (streamKey: string, config?: {groupName: string, consumerName: string, claimMinIdleTime: number}, blockTimeout: number = 1000): Promise<ConsumedJobMessage> => {
+
+export type StreamMessage = {
+    streamMessageId: string
+    jobId: string
+}
+
+export const getMessage = async (streamKey: string, config?: {groupName: string, consumerName: string, claimMinIdleTime: number}, blockTimeout: number = 1000): Promise<StreamMessage> => {
 
     let cmd = 'XREAD'
     let params = ['BLOCK', blockTimeout.toString(), 'COUNT', '1', 'STREAMS', streamKey, '0']
@@ -233,11 +217,6 @@ export const getMessage = async (streamKey: string, config?: {groupName: string,
     }
 
     if (!response) throw 'NO_MESSAGE_FOUND'
-
-    // { "job-queue:jobs:kaidi": [
-    //     [ "1786427859403-0", [ "produced_time", "1786427858387", "payload", "7416350627799220233" ] ]
-    //   ],
-    // }
 
     const streamEntry = response[streamKey]?.[0]
 
@@ -274,66 +253,7 @@ export const getMessage = async (streamKey: string, config?: {groupName: string,
         throw error
     }
 
-    let jobFields: Record<string, string>
-    try {
-        jobFields = await messageQueueClient.hgetall(`jobs:${jobId}`)
-    } catch (e) {
-        const error: GetMessageError = { code: 'ERROR_WHEN_HGETALL_BY_KEY', streamMessageId, jobId}
-        throw error
-    }
-
-    if (Object.keys(jobFields).length === 0) {
-        const error: GetMessageError = { code: 'JOB_MESSAGE_NOT_FOUND', streamMessageId, jobId}
-        throw error
-    }
-
-    const createdAt = Number(jobFields.createdAt)
-    const retried = Number(jobFields.retried)
-    const maxRetry = Number(jobFields.maxRetry)
-    const lastTriedAt = Number(jobFields.lastTriedAt)
-
-    if (!Number.isFinite(createdAt) || !Number.isFinite(retried) || !Number.isFinite(maxRetry) || !Number.isFinite(lastTriedAt)) {
-        const error: GetMessageError = { code: 'INVALID_JOB_NUMBER_FIELD', streamMessageId, jobId}
-        throw error
-    }
-
-    const createdBy = jobFields.createdBy
-
-    if (typeof createdBy !== 'string' || createdBy.trim().length === 0) {
-        const error: GetMessageError = { code: 'INVALID_JOB_CREATED_BY', streamMessageId,jobId}
-        throw error
-    }
-
-    if (!supportedJobNames.includes(jobFields.name as JobName)) {
-        const error: GetMessageError = { code: 'INVALID_JOB_NAME', streamMessageId, jobId}
-        throw error
-    }
-
-    let payload: JobPayload
-
-    try {
-        payload = JSON.parse(jobFields.payload) as JobPayload
-    } catch (e) {
-        const error: GetMessageError = { code: 'INVALID_JOB_PAYLOAD', streamMessageId, jobId}
-        throw error
-    }
-
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-        const error: GetMessageError = { code: 'INVALID_JOB_PAYLOAD', streamMessageId, jobId}
-        throw error
-    }
-
-    return {
-        streamMessageId,
-        jobId,
-        name: jobFields.name as JobName,
-        createdAt,
-        createdBy,
-        retried,
-        maxRetry,
-        lastTriedAt,
-        payload
-    }
+    return { streamMessageId, jobId }
 }
 
 

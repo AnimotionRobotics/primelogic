@@ -1,8 +1,10 @@
 import type { ConsumedJobMessage, ResponseMessage } from '@commontypes/messageType'
-import { cacheClient, incrementHashField, setHash } from '@modules/cache'
+import { incrementHashField, setHash } from '@modules/cache'
 import { dispatchMessage, getMessage, nAckMessage } from '@modules/mq'
+import { logEvent } from '@modules/logger'
 import { serviceRoute, type ServiceCallResult } from '@services'
-import { onDlqError, onGetMessageError } from './abnormal'
+import { onDispatchResponseError, onDlqError, onGetMessageError, onCallServiceError } from './abnormal'
+import { loadJobMessage } from './jobMessage'
 
 export type MessageQueueConsumerConfig = {
     streamKey: string
@@ -21,7 +23,8 @@ export type GetMessageStepResult =
 // Get one message and return next step
 export const onGetMessage = async (config: MessageQueueConsumerConfig): Promise<GetMessageStepResult> => {
     try {
-        const message = await getMessage(
+        // Get one message from the source Stream
+        const streamMessage = await getMessage(
             config.streamKey,
             {
                 groupName: config.groupName,
@@ -31,13 +34,18 @@ export const onGetMessage = async (config: MessageQueueConsumerConfig): Promise<
             5000
         )
 
-        console.info('Received source message from mq: ', {
-            streamMessageId: message.streamMessageId,
-            jobId: message.jobId,
-            name: message.name,
+        // Load the Job record from Cache
+        const message = await loadJobMessage(streamMessage)
+
+        logEvent('info', 'mq.source.received', {
+            sourceStreamKey: config.streamKey,
+            sourceStreamMessageId: message.streamMessageId,
+            requestJobId: message.jobId,
+            jobName: message.name,
             sourceRetryCount: message.retried,
             maxSourceRetry: message.maxRetry
         })
+
         return { nextStep: 'callService', message }
     } catch (error: unknown) {
         if (error === 'CONSUME_NOT_ALLOWED') {
@@ -93,24 +101,30 @@ export const onCallService = async (message: ConsumedJobMessage, config: Message
     try {
         serviceResult = await serviceRoute(message.name, message.payload, message.jobId)
     } catch (serviceError) {
-        console.error('Service execution failed: ', {
-            error: serviceError,
-            streamMessageId: message.streamMessageId,
-            jobId: message.jobId,
-            name: message.name
+        const canRetry = onCallServiceError(serviceError)
+        const serviceErrorCode = typeof serviceError === 'string' ? serviceError : 'SERVICE_FUNCTION_FAILED'
+        logEvent(canRetry ? 'warn' : 'error', 'service.call.failed', {
+            sourceStreamMessageId: message.streamMessageId,
+            requestJobId: message.jobId,
+            jobName: message.name,
+            errorCode: serviceErrorCode,
+            errorMessage: serviceError instanceof Error ? serviceError.message: undefined,
+            shouldRetryService: canRetry
         })
-        serviceResult = { err: true, ack: true, msg: 'SERVICE_FUNCTION_FAILED', responseName: 'taskOperationFailed' }
+        serviceResult = canRetry
+            ? { err: true, ack: false, msg: serviceErrorCode }
+            : { err: true, ack: true, msg: 'SERVICE_FUNCTION_FAILED', responseName: 'taskOperationFailed' }
     }
 
-    console.info('Service call completed: ', {
-        streamMessageId: message.streamMessageId,
-        jobId: message.jobId,
-        name: message.name,
-        err: serviceResult.err,
-        ack: serviceResult.ack,
-        msg: serviceResult.msg,
+    logEvent('info', 'service.call.completed', {
+        sourceStreamMessageId: message.streamMessageId,
+        requestJobId: message.jobId,
+        jobName: message.name,
+        hasServiceError: serviceResult.err,
+        shouldAckSourceMessage: serviceResult.ack,
+        resultMessage: serviceResult.msg,
         responseName: serviceResult.responseName,
-        serviceDurationMs: Date.now() - serviceStartedAt
+        durationMs: Date.now() - serviceStartedAt
     })
 
     // retry
@@ -121,18 +135,28 @@ export const onCallService = async (message: ConsumedJobMessage, config: Message
             await setHash(`jobs:${message.jobId}`, { lastTriedAt: Date.now().toString() })
             await nAckMessage(config.streamKey, config.groupName, 'FAIL', [message.streamMessageId])
 
-            console.warn('Source message released after service failure: ', {
-                streamMessageId: message.streamMessageId,
-                jobId: message.jobId,
+            logEvent('warn', 'mq.source.nacked', {
+                sourceStreamKey: config.streamKey,
+                sourceGroupName: config.groupName,
+                sourceStreamMessageId: message.streamMessageId,
+                requestJobId: message.jobId,
+                jobName: message.name,
+                errorCode: serviceResult.msg,
                 sourceRetryCount: retried,
                 maxSourceRetry: message.maxRetry,
-                nextStep: retried >= message.maxRetry ? 'moveToDlq' : 'retryService'
+                nextAction: retried >= message.maxRetry ? 'moveToDlq' : 'retryService'
             })
         } catch (error) {
-            console.error('Failed to release source message after service failure: ', {
-                error,
-                streamMessageId: message.streamMessageId,
-                jobId: message.jobId
+            logEvent('error', 'mq.source.retry_setup_failed', {
+                sourceStreamKey: config.streamKey,
+                sourceGroupName: config.groupName,
+                sourceStreamMessageId: message.streamMessageId,
+                requestJobId: message.jobId,
+                jobName: message.name,
+                serviceErrorCode: serviceResult.msg,
+                retryErrorCode: typeof error === 'string' ? error : 'SOURCE_RETRY_SETUP_FAILED',
+                retryErrorMessage: error instanceof Error ? error.message : undefined,
+                maxSourceRetry: message.maxRetry
             })
             throw error
         }
@@ -156,8 +180,9 @@ export const onDispatchResponse = async (message: ConsumedJobMessage, serviceRes
         throw 'MISSING_SERVICE_RESPONSE_NAME'
     }
 
-    const responseCreatedAt = Date.now()
+    // build responseId
     const responseId = Bun.hash(`response:${message.jobId}`).toString()
+    const responseCreatedAt = Date.now()
     const responseMessageBase = {
         requestJobId: message.jobId,
         name: serviceResult.responseName,
@@ -179,42 +204,26 @@ export const onDispatchResponse = async (message: ConsumedJobMessage, serviceRes
         responseMessage = { ...responseMessageBase, result: 'success', payload: serviceResult.payload }
     }
 
-    const responseMessageFields = [
-        'requestJobId', responseMessage.requestJobId,
-        'name', responseMessage.name,
-        'createdAt', responseMessage.createdAt.toString(),
-        'createdBy', responseMessage.createdBy,
-        'retried', responseMessage.retried.toString(),
-        'maxRetry', responseMessage.maxRetry.toString(),
-        'lastTriedAt', responseMessage.lastTriedAt.toString(),
-        'result', responseMessage.result,
-        'msg', responseMessage.msg
-    ]
-
-    if (responseMessage.result === 'success') {
-        responseMessageFields.push('payload', JSON.stringify(responseMessage.payload))
+    // Convert response values to Redis Hash strings
+    const responseFields: Record<string, string> = {}
+    for (const [field, value] of Object.entries(responseMessage)) {
+        responseFields[field] = typeof value === 'object' ? JSON.stringify(value) : String(value)
     }
 
     const maxDispatchRetry = 3
-    const retryableErrorCodes = [
-        // Bun Redis connection error
-        'ERR_REDIS_CONNECTION_CLOSED',
-        // Network errors
-        'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH',
-        // Redis temporary errors
-        'BUSY', 'TRYAGAIN', 'LOADING'
-    ]
-
     let dispatchRetryCount = 0
+    let responseStage: 'save' | 'dispatch' = 'save'
 
     // Retry temporary Redis and network errors
     while (true) {
         try {
-            await dispatchMessage(config.responseStreamKey, responseId, cacheClient, responseMessageFields)
+            responseStage = 'save'
+            await setHash(`responses:${responseId}`, responseFields)
+
+            responseStage = 'dispatch'
+            await dispatchMessage(config.responseStreamKey, responseId)
             break
         } catch (dispatchError) {
-            console.error('Response dispatch failed: ', dispatchError)
-
             let errorCode: string | undefined
             let errorMessage: string
             // MESSAGE_QUEUE_CLIENT_NOT_INITIALIZED
@@ -227,13 +236,37 @@ export const onDispatchResponse = async (message: ConsumedJobMessage, serviceRes
                     errorCode = dispatchError.code
                 }
             } else {
+                    logEvent('error', 'mq.response.dispatch_failed', {
+                        responseStreamKey: config.responseStreamKey,
+                        responseId,
+                        sourceStreamMessageId: message.streamMessageId,
+                        requestJobId: responseMessage.requestJobId,
+                        jobName: message.name,
+                        responseName: responseMessage.name,
+                        errorCode: 'UNKNOWN_RESPONSE_DISPATCH_ERROR',
+                        responseStage,
+                        dispatchRetryCount,
+                        maxDispatchRetry
+                    })
+
                 throw dispatchError
             }
 
-            // Check each retryable error
-            const canRetry = retryableErrorCodes.some(retryableCode => errorCode === retryableCode || errorMessage.startsWith(retryableCode))
-
+            const canRetry = onDispatchResponseError(errorCode, errorMessage)
             if (!canRetry || dispatchRetryCount >= maxDispatchRetry) {
+                logEvent('error', 'mq.response.dispatch_failed', {
+                    responseStreamKey: config.responseStreamKey,
+                    responseId,
+                    sourceStreamMessageId: message.streamMessageId,
+                    requestJobId: responseMessage.requestJobId,
+                    jobName: message.name,
+                    responseName: responseMessage.name,
+                    errorCode: errorCode ?? errorMessage,
+                    errorMessage,
+                    responseStage,
+                    dispatchRetryCount,
+                    maxDispatchRetry
+                })
                 throw dispatchError
             }
 
@@ -241,24 +274,34 @@ export const onDispatchResponse = async (message: ConsumedJobMessage, serviceRes
             const retryDelay = 500 * 2 ** dispatchRetryCount
             dispatchRetryCount += 1
 
-            console.warn('Retrying response dispatch: ', {
+            logEvent('warn', 'mq.response.retry_scheduled', {
+                responseStreamKey: config.responseStreamKey,
                 responseId,
+                sourceStreamMessageId: message.streamMessageId,
                 requestJobId: responseMessage.requestJobId,
+                jobName: message.name,
+                responseName: responseMessage.name,
+                errorCode: errorCode ?? errorMessage,
+                errorMessage,
+                responseStage,
                 dispatchRetryCount,
                 maxDispatchRetry,
-                retryDelay
+                retryDelayMs: retryDelay
             })
 
             await Bun.sleep(retryDelay)
         }
     }
 
-    console.info('Response dispatched to mq: ', {
+    logEvent('info', 'mq.response.dispatched', {
+        responseStreamKey: config.responseStreamKey,
         responseId,
+        sourceStreamMessageId: message.streamMessageId,
         requestJobId: responseMessage.requestJobId,
+        jobName: message.name,
         responseName: responseMessage.name,
-        result: responseMessage.result,
-        msg: responseMessage.msg,
+        responseResult: responseMessage.result,
+        resultMessage: responseMessage.msg,
         dispatchRetryCount,
         maxDispatchRetry
     })
