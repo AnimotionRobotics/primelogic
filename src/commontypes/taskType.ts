@@ -1,11 +1,11 @@
-import type { CreateLeaveTaskPayload, LeaveTaskDetails, UpdateLeaveTaskPayload } from '@commontypes/leaveTaskType'
+import type { CreateLeaveTaskPayload, LeaveTaskDetails, LeaveType, UpdateLeaveTaskPayload } from '@commontypes/leaveTaskType'
 
 export const supportedTaskTypes = ['leave'] as const
 
 export type TaskType = typeof supportedTaskTypes[number]
 
 
-export const supportedTaskStatuses = ['PENDING', 'APPROVED', 'REJECTED'] as const
+export const supportedTaskStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'DELETED'] as const
 
 export type TaskStatus = typeof supportedTaskStatuses[number]
 
@@ -32,9 +32,16 @@ export type ReviewTaskPayload = {
     comment?: string
 }
 
+export type DeleteTaskPayload = {
+    taskId: string,
+    submitterId: string
+}
+
 type ListTasksFilter = {
+    taskId?: string,
     taskType?: TaskType,
     status?: TaskStatus,
+    leaveType?: LeaveType,
 
     createdAtFrom?: number,
     createdAtTo?: number,

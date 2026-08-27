@@ -2,8 +2,9 @@ import { addSortedSetMember, deleteHashFields, getHashAllFields, getSortedSetMem
 import { getDepartment, getEmployee } from '@modules/organization'
 import type { ResponseName } from '@commontypes/messageType'
 import { supportedTaskStatuses, supportedTaskTypes} from '@commontypes/taskType'
-import type { CreateTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskDetails, TaskRecord, TaskServiceResultPayload, TaskStatus, TaskType, ListTasksPayload, ListTasksResponsePayload} from '@commontypes/taskType'
-import { taskObserverDepartmentIds, validateLeaveTaskDetails } from './taskSupport'
+import { supportedLeaveTypes } from '@commontypes/leaveTaskType'
+import type { CreateTaskPayload, DeleteTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskRecord, TaskStatus, ListTasksPayload, ListTasksResponsePayload} from '@commontypes/taskType'
+import { buildTaskServiceResultPayload, parseTaskRecord, taskObserverDepartmentIds, validateLeaveTaskDetails } from './taskSupport'
 import type { HandlerResult, TaskDetailsValidator } from './taskSupport'
 
 // Add one file to selected tasks
@@ -15,7 +16,6 @@ export const addFileToTask = async (config): Promise<HandlerResult> => {
     const userId = configObj.userId
     const selectedValues = configObj.selectedValues
     const fileId = configObj.fileId
-    console.log('metadata: ', metadata, '\nuserId: ', userId, '\nselectedValue: ', selectedValues)
 
     // check task id if exists by using each selectedValues
     // key: work:entities for entries like: task, mission, feature, approval, incident, meeting, reminder, etc
@@ -26,8 +26,6 @@ export const addFileToTask = async (config): Promise<HandlerResult> => {
         try {
             res = await getHashAllFields(item)
         }catch(e){
-            console.log('Error when getHashField(), e: ', e)
-
             if (e === 'NO_RECORD_FOUND') {
                 notFound.push(item)
                 continue
@@ -37,7 +35,6 @@ export const addFileToTask = async (config): Promise<HandlerResult> => {
         }
         res ? workEntities.push(res) : null
     }
-    console.log('workEntities: ', workEntities, '\nnotFound: ', notFound)
 
     // workEntities if empty, should broadcast back to message producer with description of error detail
     if (workEntities.length === 0) {
@@ -121,50 +118,23 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         return { res: 'error', msg: 'TASK_ALREADY_EXISTS' }
     }
 
+    if (existingTaskFields && existingTaskFields.taskId !== taskId) {
+        return { res: 'error', msg: 'TASK_ID_MISMATCH' }
+    }
+
     // Return the existing task for the same request
     if (existingTaskFields) {
-        const existingApproverIds = JSON.parse(existingTaskFields.approverIds) as string[]
-        const existingObserverIds = JSON.parse(existingTaskFields.observerIds) as string[]
-
-        // Build the response with saved task fields
-        const existingTaskServiceResultPayload: TaskServiceResultPayload = {
-            taskId: existingTaskFields.taskId,
-            taskType: existingTaskFields.taskType as TaskType,
-            status: existingTaskFields.status as TaskStatus,
-
-            submitterId: existingTaskFields.submitterId,
-            approverIds: existingApproverIds,
-            observerIds: existingObserverIds,
-
-            title: existingTaskFields.title,
-            details: JSON.parse(existingTaskFields.details) as TaskDetails,
-
-            createdAt: Number(existingTaskFields.createdAt),
-            updatedAt: Number(existingTaskFields.updatedAt)
-        }
-
-        // Add saved optional fields
-        if (existingTaskFields.description !== undefined) {
-            existingTaskServiceResultPayload.description = existingTaskFields.description
-        }
-
-        if (existingTaskFields.reviewedAt !== undefined) {
-            existingTaskServiceResultPayload.reviewedAt = Number(existingTaskFields.reviewedAt)
-        }
-
-        if (existingTaskFields.reviewComment !== undefined) {
-            existingTaskServiceResultPayload.reviewComment = existingTaskFields.reviewComment
-        }
+        const existingTaskRecord = parseTaskRecord(existingTaskFields)
+        const existingTaskServiceResultPayload = buildTaskServiceResultPayload(existingTaskRecord)
 
         // Add the task to both indexes again
-        const existingTaskCreatedAt = Number(existingTaskFields.createdAt)
-        const taskIndexSubmitterKey = `tasks:index:submitter:${existingTaskFields.submitterId}`
+        const taskIndexSubmitterKey = `tasks:index:submitter:${existingTaskRecord.submitterId}`
 
-        await addSortedSetMember(taskIndexSubmitterKey, existingTaskCreatedAt, existingTaskFields.taskId)
+        await addSortedSetMember(taskIndexSubmitterKey, existingTaskRecord.createdAt, existingTaskRecord.taskId)
 
-        for (const approverId of existingApproverIds) {
+        for (const approverId of existingTaskRecord.approverIds) {
             const taskIndexApproverKey = `tasks:index:approver:${approverId}`
-            await addSortedSetMember(taskIndexApproverKey, existingTaskCreatedAt, existingTaskFields.taskId)
+            await addSortedSetMember(taskIndexApproverKey, existingTaskRecord.createdAt, existingTaskRecord.taskId)
         }
 
         return { res: 'success', msg: 'TASK_CREATED', responseName: 'taskCreated', payload: existingTaskServiceResultPayload }
@@ -270,25 +240,7 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
     }
 
     // Build the response
-    const taskServiceResultPayload: TaskServiceResultPayload = {
-        taskId: taskRecord.taskId,
-        taskType: taskRecord.taskType,
-        status: taskRecord.status,
-
-        submitterId: taskRecord.submitterId,
-        approverIds: taskRecord.approverIds,
-        observerIds: taskRecord.observerIds,
-
-        title: taskRecord.title,
-        details: taskRecord.details,
-
-        createdAt: taskRecord.createdAt,
-        updatedAt: taskRecord.updatedAt
-    }
-
-    if (taskRecord.description !== undefined) {
-        taskServiceResultPayload.description = taskRecord.description
-    }
+    const taskServiceResultPayload = buildTaskServiceResultPayload(taskRecord)
 
     return { res: 'success', msg: 'TASK_CREATED', responseName: 'taskCreated', payload: taskServiceResultPayload }
 }
@@ -333,6 +285,10 @@ export const updateTask = async (payload: UpdateTaskPayload): Promise<HandlerRes
         return { res: 'error', msg: 'TASK_UPDATE_FORBIDDEN' }
     }
 
+    if (taskFields.status === 'DELETED') {
+        return { res: 'error', msg: 'TASK_ALREADY_DELETED' }
+    }
+
     if (typeof payload.title !== 'string' || payload.title.trim().length === 0) {
         throw 'INVALID_TASK_TITLE'
     }
@@ -372,29 +328,96 @@ export const updateTask = async (payload: UpdateTaskPayload): Promise<HandlerRes
 
     await deleteHashFields(taskKey, ['reviewedAt', 'reviewComment'])
 
-    const taskServiceResultPayload: TaskServiceResultPayload = {
-        taskId: taskFields.taskId,
-        taskType: taskFields.taskType as TaskType,
+    const taskRecord = parseTaskRecord(taskFields)
+    const updatedTaskRecord: TaskRecord = {
+        ...taskRecord,
         status: 'PENDING',
-
-        submitterId: taskFields.submitterId,
-        approverIds: JSON.parse(taskFields.approverIds) as string[],
-        observerIds: JSON.parse(taskFields.observerIds) as string[],
-
         title: payload.title,
         details: payload.details,
-
-        createdAt: Number(taskFields.createdAt),
         updatedAt
     }
 
     const updatedDescription = payload.description ?? taskFields.description
 
     if (updatedDescription !== undefined) {
-        taskServiceResultPayload.description = updatedDescription
+        updatedTaskRecord.description = updatedDescription
     }
 
+    delete updatedTaskRecord.reviewedAt
+    delete updatedTaskRecord.reviewComment
+
+    const taskServiceResultPayload = buildTaskServiceResultPayload(updatedTaskRecord)
+
     return { res: 'success', msg: 'TASK_UPDATED', responseName: 'taskUpdated',  payload: taskServiceResultPayload }
+}
+
+
+
+
+
+// Mark a task as deleted
+export const deleteTask = async (payload: DeleteTaskPayload): Promise<HandlerResult> => {
+
+    const hasRequiredDeleteFields = 'taskId' in payload && 'submitterId' in payload
+
+    if (!hasRequiredDeleteFields) {
+        throw 'INVALID_DELETE_TASK_PAYLOAD'
+    }
+
+    if (typeof payload.taskId !== 'string' || payload.taskId.trim().length === 0) {
+        throw 'INVALID_TASK_ID'
+    }
+
+    if (typeof payload.submitterId !== 'string' || payload.submitterId.trim().length === 0) {
+        throw 'INVALID_TASK_SUBMITTER_ID'
+    }
+
+    // Load the task
+    const taskKey = `tasks:${payload.taskId}`
+    let taskFields: Record<string, string>
+    try {
+        taskFields = await getHashAllFields(taskKey)
+    } catch (error) {
+        if (error === 'NO_RECORD_FOUND') {
+            return { res: 'error', msg: 'TASK_NOT_FOUND' }
+        }
+
+        throw error
+    }
+
+    if (taskFields.taskId !== payload.taskId) {
+        return { res: 'error', msg: 'TASK_ID_MISMATCH' }
+    }
+
+    if (taskFields.submitterId !== payload.submitterId) {
+        return { res: 'error', msg: 'TASK_DELETE_FORBIDDEN' }
+    }
+
+    const taskRecord = parseTaskRecord(taskFields)
+
+    // Return the saved task when the delete request is repeated
+    if (taskRecord.status === 'DELETED') {
+        const taskServiceResultPayload = buildTaskServiceResultPayload(taskRecord)
+
+        return { res: 'success', msg: 'TASK_DELETED', responseName: 'taskDeleted', payload: taskServiceResultPayload }
+    }
+
+    // Save the deleted status
+    const updatedAt = Date.now()
+    await setHash(taskKey, {
+        status: 'DELETED',
+        updatedAt: updatedAt.toString()
+    })
+
+    // Build the response
+    const deletedTaskRecord: TaskRecord = {
+        ...taskRecord,
+        status: 'DELETED',
+        updatedAt
+    }
+    const taskServiceResultPayload = buildTaskServiceResultPayload(deletedTaskRecord)
+
+    return { res: 'success', msg: 'TASK_DELETED', responseName: 'taskDeleted', payload: taskServiceResultPayload }
 }
 
 
@@ -427,9 +450,10 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
     }
 
     // Load the task record
+    const taskKey = `tasks:${payload.taskId}`
     let taskFields: Record<string, string>
     try {
-        taskFields = await getHashAllFields(`tasks:${payload.taskId}`)
+        taskFields = await getHashAllFields(taskKey)
     } catch (error) {
         if (error === 'NO_RECORD_FOUND') {
             return { res: 'error', msg: 'TASK_NOT_FOUND' }
@@ -437,12 +461,19 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
         throw error
     }
 
-    // Check review permission
-    const approverIds = JSON.parse(taskFields.approverIds) as string[]
-    const observerIds = JSON.parse(taskFields.observerIds) as string[]
+    if (taskFields.taskId !== payload.taskId) {
+        return { res: 'error', msg: 'TASK_ID_MISMATCH' }
+    }
 
-    if (!approverIds.includes(payload.approverId)) {
+    // Check review permission
+    const taskRecord = parseTaskRecord(taskFields)
+
+    if (!taskRecord.approverIds.includes(payload.approverId)) {
         return { res: 'error', msg: 'TASK_REVIEW_FORBIDDEN' }
+    }
+
+    if (taskRecord.status === 'DELETED') {
+        return { res: 'error', msg: 'TASK_ALREADY_DELETED' }
     }
 
     // Check whether the task has already been reviewed
@@ -464,37 +495,23 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
     }
 
     // Save the review result
-    await setHash(`tasks:${payload.taskId}`, updatedFields)
+    await setHash(taskKey, updatedFields)
 
     // Build the service response
-    const taskDetails = JSON.parse(taskFields.details) as TaskDetails
     const responseName: ResponseName = reviewStatus === 'APPROVED' ? 'taskApproved' : 'taskRejected'
     const resultMessage = reviewStatus === 'APPROVED' ? 'TASK_APPROVED' : 'TASK_REJECTED'
-
-    const taskServiceResultPayload: TaskServiceResultPayload = {
-        taskId: payload.taskId,
-        taskType: taskFields.taskType as TaskType,
+    const reviewedTaskRecord: TaskRecord = {
+        ...taskRecord,
         status: reviewStatus,
-
-        submitterId: taskFields.submitterId,
-        approverIds,
-        observerIds,
-
-        title: taskFields.title,
-        details: taskDetails,
-
-        createdAt: Number(taskFields.createdAt),
         updatedAt: reviewedAt,
         reviewedAt
     }
 
-    if (taskFields.description !== undefined) {
-        taskServiceResultPayload.description = taskFields.description
+    if (payload.comment !== undefined) {
+        reviewedTaskRecord.reviewComment = payload.comment
     }
 
-    if (payload.comment !== undefined) {
-        taskServiceResultPayload.reviewComment = payload.comment
-    }
+    const taskServiceResultPayload = buildTaskServiceResultPayload(reviewedTaskRecord)
 
     return { res: 'success', msg: resultMessage, responseName, payload: taskServiceResultPayload }
 }
@@ -520,12 +537,36 @@ export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResul
         throw 'INVALID_LIST_TASKS_APPROVER_ID'
     }
 
+    if (payload.taskId !== undefined && (typeof payload.taskId !== 'string' || payload.taskId.trim().length === 0)) {
+        throw 'INVALID_LIST_TASKS_TASK_ID'
+    }
+
     if (payload.taskType !== undefined && !supportedTaskTypes.includes(payload.taskType)) {
         throw 'INVALID_LIST_TASKS_TASK_TYPE'
     }
 
     if (payload.status !== undefined && !supportedTaskStatuses.includes(payload.status)) {
         throw 'INVALID_LIST_TASKS_STATUS'
+    }
+
+    if (payload.leaveType !== undefined && payload.taskType !== 'leave') {
+        throw 'INVALID_LIST_TASKS_LEAVE_TYPE_FILTER'
+    }
+
+    if (payload.leaveType !== undefined && !supportedLeaveTypes.includes(payload.leaveType)) {
+        throw 'INVALID_LIST_TASKS_LEAVE_TYPE'
+    }
+
+    if (payload.createdAtFrom !== undefined && !Number.isFinite(payload.createdAtFrom)) {
+        throw 'INVALID_LIST_TASKS_CREATED_AT_FROM'
+    }
+
+    if (payload.createdAtTo !== undefined && !Number.isFinite(payload.createdAtTo)) {
+        throw 'INVALID_LIST_TASKS_CREATED_AT_TO'
+    }
+
+    if (payload.createdAtFrom !== undefined && payload.createdAtTo !== undefined && payload.createdAtFrom > payload.createdAtTo) {
+        throw 'INVALID_LIST_TASKS_CREATED_AT_RANGE'
     }
 
     if (payload.reviewedAtFrom !== undefined && !Number.isFinite(payload.reviewedAtFrom)) {
@@ -542,10 +583,9 @@ export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResul
 
     // Get taskIds
     const taskIndexKey = hasSubmitterId ? `tasks:index:submitter:${payload.submitterId}` : `tasks:index:approver:${payload.approverId}`
+    const taskIds = payload.taskId !== undefined ? [payload.taskId] : await getSortedSetMembers(taskIndexKey, payload.createdAtFrom, payload.createdAtTo)
 
-    const taskIds = await getSortedSetMembers(taskIndexKey, payload.createdAtFrom, payload.createdAtTo)
     const listTasksResponsePayload: ListTasksResponsePayload = []
-
     // Load and filter tasks
     for (const taskId of taskIds) {
         let taskFields: Record<string, string>
@@ -567,22 +607,37 @@ export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResul
             continue
         }
 
-        const approverIds = JSON.parse(taskFields.approverIds) as string[]
-        const observerIds = JSON.parse(taskFields.observerIds) as string[]
+        const taskRecord = parseTaskRecord(taskFields)
 
-        if (payload.approverId !== undefined && !approverIds.includes(payload.approverId)) {
+        if (payload.approverId !== undefined && !taskRecord.approverIds.includes(payload.approverId)) {
             continue
         }
 
-        if (payload.taskType !== undefined && taskFields.taskType !== payload.taskType) {
+        if (payload.taskType !== undefined && taskRecord.taskType !== payload.taskType) {
             continue
         }
 
-        if (payload.status !== undefined && taskFields.status !== payload.status) {
+        if (payload.status !== undefined && taskRecord.status !== payload.status) {
             continue
         }
 
-        const reviewedAt = taskFields.reviewedAt !== undefined ? Number(taskFields.reviewedAt) : undefined
+        if (payload.status === undefined && taskRecord.status === 'DELETED') {
+            continue
+        }
+
+        if (payload.leaveType !== undefined && taskRecord.details.leaveType !== payload.leaveType && taskRecord.taskType === 'leave') {
+            continue
+        }
+
+        if (payload.createdAtFrom !== undefined && taskRecord.createdAt < payload.createdAtFrom) {
+            continue
+        }
+
+        if (payload.createdAtTo !== undefined && taskRecord.createdAt > payload.createdAtTo) {
+            continue
+        }
+
+        const reviewedAt = taskRecord.reviewedAt
 
         if (payload.reviewedAtFrom !== undefined && (reviewedAt === undefined || reviewedAt < payload.reviewedAtFrom)) {
             continue
@@ -593,34 +648,7 @@ export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResul
         }
 
         // Build the task result
-        const taskServiceResultPayload: TaskServiceResultPayload = {
-            taskId: taskFields.taskId,
-            taskType: taskFields.taskType as TaskType,
-            status: taskFields.status as TaskStatus,
-
-            submitterId: taskFields.submitterId,
-            approverIds,
-            observerIds,
-
-            title: taskFields.title,
-            details: JSON.parse(taskFields.details) as TaskDetails,
-
-            createdAt: Number(taskFields.createdAt),
-            updatedAt: Number(taskFields.updatedAt)
-        }
-
-        // Add optional fields
-        if (taskFields.description !== undefined) {
-            taskServiceResultPayload.description = taskFields.description
-        }
-
-        if (reviewedAt !== undefined) {
-            taskServiceResultPayload.reviewedAt = reviewedAt
-        }
-
-        if (taskFields.reviewComment !== undefined) {
-            taskServiceResultPayload.reviewComment = taskFields.reviewComment
-        }
+        const taskServiceResultPayload = buildTaskServiceResultPayload(taskRecord)
 
         listTasksResponsePayload.push(taskServiceResultPayload)
     }

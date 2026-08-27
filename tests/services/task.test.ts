@@ -1,11 +1,81 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test'
 import * as cacheModule from '@modules/cache'
 import * as organizationModule from '@modules/organization'
-import { addFileToTask, createTask, listTasks, reviewTask, updateTask } from '@services/task'
-import type { AddFileToTaskPayload, CreateTaskPayload, ListTasksPayload, ReviewTaskPayload, UpdateTaskPayload } from '@commontypes/taskType'
+import { addFileToTask, createTask, deleteTask, listTasks, reviewTask, updateTask } from '@services/task'
+import { buildTaskServiceResultPayload, parseTaskRecord } from '@services/taskSupport'
+import type { AddFileToTaskPayload, CreateTaskPayload, DeleteTaskPayload, ListTasksPayload, ReviewTaskPayload, TaskRecord, UpdateTaskPayload } from '@commontypes/taskType'
 
 beforeEach(() => {
     vi.restoreAllMocks()
+})
+
+
+describe('taskRecord', () => {
+    it('parses Redis Hash fields and builds a task service payload', () => {
+        const taskFields: Record<string, string> = {
+            taskId: 'task-1',
+            taskType: 'leave',
+            status: 'APPROVED',
+            sourceJobId: 'create-job-1',
+            submitterId: 'submitter-1',
+            approverIds: JSON.stringify(['approver-1']),
+            observerIds: JSON.stringify(['observer-1']),
+            title: 'Annual leave',
+            description: 'Family trip',
+            details: JSON.stringify({
+                leaveType: 'annual',
+                startAt: 100,
+                endAt: 200
+            }),
+            createdAt: '100',
+            updatedAt: '300',
+            reviewedAt: '300',
+            reviewComment: 'Approved'
+        }
+
+        const taskRecord: TaskRecord = parseTaskRecord(taskFields)
+        const payload = buildTaskServiceResultPayload(taskRecord)
+
+        expect(taskRecord).toEqual({
+            taskId: 'task-1',
+            taskType: 'leave',
+            status: 'APPROVED',
+            sourceJobId: 'create-job-1',
+            submitterId: 'submitter-1',
+            approverIds: ['approver-1'],
+            observerIds: ['observer-1'],
+            title: 'Annual leave',
+            description: 'Family trip',
+            details: {
+                leaveType: 'annual',
+                startAt: 100,
+                endAt: 200
+            },
+            createdAt: 100,
+            updatedAt: 300,
+            reviewedAt: 300,
+            reviewComment: 'Approved'
+        })
+        expect(payload).toEqual({
+            taskId: 'task-1',
+            taskType: 'leave',
+            status: 'APPROVED',
+            submitterId: 'submitter-1',
+            approverIds: ['approver-1'],
+            observerIds: ['observer-1'],
+            title: 'Annual leave',
+            description: 'Family trip',
+            details: {
+                leaveType: 'annual',
+                startAt: 100,
+                endAt: 200
+            },
+            createdAt: 100,
+            updatedAt: 300,
+            reviewedAt: 300,
+            reviewComment: 'Approved'
+        })
+    })
 })
 
 
@@ -81,8 +151,10 @@ describe('createTask', () => {
         }
     }
 
+    const createTaskId = Bun.hash('task:create-job-1').toString()
+
     const existingTaskFields: Record<string, string> = {
-        taskId: 'existing-task-id',
+        taskId: createTaskId,
         taskType: 'leave',
         status: 'PENDING',
         sourceJobId: 'create-job-1',
@@ -176,7 +248,7 @@ describe('createTask', () => {
             msg: 'TASK_CREATED',
             responseName: 'taskCreated',
             payload: {
-                taskId: 'existing-task-id',
+                taskId: createTaskId,
                 taskType: 'leave',
                 status: 'PENDING',
                 submitterId: 'U0AMWQX3CQG',
@@ -190,8 +262,8 @@ describe('createTask', () => {
             }
         })
         expect(setHashSpy).not.toHaveBeenCalled()
-        expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(1, 'tasks:index:submitter:U0AMWQX3CQG', 100, 'existing-task-id')
-        expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(2, 'tasks:index:approver:U0BJR2NMZ6D', 100, 'existing-task-id')
+        expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(1, 'tasks:index:submitter:U0AMWQX3CQG', 100, createTaskId)
+        expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(2, 'tasks:index:approver:U0BJR2NMZ6D', 100, createTaskId)
     })
 
     it('returns an error when the saved task belongs to another request', async () => {
@@ -205,6 +277,21 @@ describe('createTask', () => {
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_ALREADY_EXISTS' })
         expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns an error when the saved task ID does not match the request key', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...existingTaskFields,
+            taskId: 'another-task'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+        const addSortedSetMemberSpy = vi.spyOn(cacheModule, 'addSortedSetMember').mockResolvedValue(undefined)
+
+        const result = await createTask(createTaskPayload, 'create-job-1')
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_ID_MISMATCH' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+        expect(addSortedSetMemberSpy).not.toHaveBeenCalled()
     })
 
     it('returns an error when no task assignment exists', async () => {
@@ -352,6 +439,19 @@ describe('reviewTask', () => {
         expect(setHashSpy).not.toHaveBeenCalled()
     })
 
+    it('returns an error when the task was deleted', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...pendingTaskFields,
+            status: 'DELETED'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await reviewTask(reviewTaskPayload)
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_ALREADY_DELETED' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
     it('returns an error when the task does not exist', async () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
@@ -359,6 +459,19 @@ describe('reviewTask', () => {
         const result = await reviewTask(reviewTaskPayload)
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_NOT_FOUND' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns an error when the stored task ID does not match', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...pendingTaskFields,
+            taskId: 'another-task'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await reviewTask(reviewTaskPayload)
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_ID_MISMATCH' })
         expect(setHashSpy).not.toHaveBeenCalled()
     })
 })
@@ -502,6 +615,140 @@ describe('updateTask', () => {
         expect(setHashSpy).not.toHaveBeenCalled()
         expect(deleteHashFieldsSpy).not.toHaveBeenCalled()
     })
+
+    it('returns an error when the task was deleted', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...approvedTaskFields,
+            status: 'DELETED'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+        const deleteHashFieldsSpy = vi.spyOn(cacheModule, 'deleteHashFields').mockResolvedValue(undefined)
+
+        const result = await updateTask(updateTaskPayload)
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_ALREADY_DELETED' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+        expect(deleteHashFieldsSpy).not.toHaveBeenCalled()
+    })
+})
+
+
+
+
+describe('deleteTask', () => {
+    const deleteTaskPayload: DeleteTaskPayload = {
+        taskId: 'task-1',
+        submitterId: 'U0AMWQX3CQG'
+    }
+
+    const pendingTaskFields: Record<string, string> = {
+        taskId: 'task-1',
+        taskType: 'leave',
+        status: 'PENDING',
+        sourceJobId: 'create-job-1',
+        submitterId: 'U0AMWQX3CQG',
+        approverIds: JSON.stringify(['U0BJR2NMZ6D']),
+        observerIds: JSON.stringify(['U0HRADMIN']),
+        title: 'Annual leave',
+        description: 'Family trip',
+        details: JSON.stringify({
+            leaveType: 'annual',
+            startAt: 100,
+            endAt: 200
+        }),
+        createdAt: '100',
+        updatedAt: '100'
+    }
+
+    it('marks a task as deleted', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1000)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskFields)
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await deleteTask(deleteTaskPayload)
+
+        expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
+            status: 'DELETED',
+            updatedAt: '1000'
+        })
+        expect(result).toEqual({
+            res: 'success',
+            msg: 'TASK_DELETED',
+            responseName: 'taskDeleted',
+            payload: {
+                taskId: 'task-1',
+                taskType: 'leave',
+                status: 'DELETED',
+                submitterId: 'U0AMWQX3CQG',
+                approverIds: ['U0BJR2NMZ6D'],
+                observerIds: ['U0HRADMIN'],
+                title: 'Annual leave',
+                description: 'Family trip',
+                details: {
+                    leaveType: 'annual',
+                    startAt: 100,
+                    endAt: 200
+                },
+                createdAt: 100,
+                updatedAt: 1000
+            }
+        })
+    })
+
+    it('returns the saved task when delete is repeated', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...pendingTaskFields,
+            status: 'DELETED',
+            updatedAt: '1000'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await deleteTask(deleteTaskPayload)
+
+        expect(result).toEqual(expect.objectContaining({
+            res: 'success',
+            msg: 'TASK_DELETED',
+            responseName: 'taskDeleted',
+            payload: expect.objectContaining({ status: 'DELETED', updatedAt: 1000 })
+        }))
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns an error when the submitter does not match', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskFields)
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await deleteTask({
+            ...deleteTaskPayload,
+            submitterId: 'another-submitter'
+        })
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_DELETE_FORBIDDEN' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns an error when the task does not exist', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await deleteTask(deleteTaskPayload)
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_NOT_FOUND' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns an error when the stored task ID does not match', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...pendingTaskFields,
+            taskId: 'another-task'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await deleteTask(deleteTaskPayload)
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_ID_MISMATCH' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
 })
 
 
@@ -609,6 +856,88 @@ describe('listTasks', () => {
         ])
     })
 
+    it('hides deleted tasks by default', async () => {
+        vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-1'])
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...pendingTaskFields,
+            status: 'DELETED'
+        })
+
+        const result = await listTasks({ submitterId })
+
+        expect(result.payload).toEqual([])
+    })
+
+    it('lists deleted tasks when deleted status is provided', async () => {
+        vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-1'])
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...pendingTaskFields,
+            status: 'DELETED'
+        })
+
+        const result = await listTasks({ submitterId, status: 'DELETED' })
+
+        expect(result.payload).toEqual([
+            expect.objectContaining({ taskId: 'task-1', status: 'DELETED' })
+        ])
+    })
+
+    it('loads one task directly when taskId is provided', async () => {
+        const getSortedSetMembersSpy = vi.spyOn(cacheModule, 'getSortedSetMembers')
+        const getHashAllFieldsSpy = vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskFields)
+        const payload: ListTasksPayload = { submitterId, taskId: 'task-1' }
+
+        const result = await listTasks(payload)
+
+        expect(getSortedSetMembersSpy).not.toHaveBeenCalled()
+        expect(getHashAllFieldsSpy).toHaveBeenCalledWith('tasks:task-1')
+        expect(result.payload).toEqual([
+            expect.objectContaining({ taskId: 'task-1', submitterId })
+        ])
+    })
+
+    it('returns an empty list when taskId is not visible to the submitter', async () => {
+        vi.spyOn(cacheModule, 'getSortedSetMembers')
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...pendingTaskFields,
+            submitterId: 'another-submitter'
+        })
+        const payload: ListTasksPayload = { submitterId, taskId: 'task-1' }
+
+        const result = await listTasks(payload)
+
+        expect(result.payload).toEqual([])
+    })
+
+    it('filters leave tasks by leaveType', async () => {
+        vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-1', 'task-2'])
+        vi.spyOn(cacheModule, 'getHashAllFields')
+            .mockResolvedValueOnce(pendingTaskFields)
+            .mockResolvedValueOnce({
+                ...pendingTaskFields,
+                taskId: 'task-2',
+                details: JSON.stringify({
+                    leaveType: 'personal',
+                    startAt: 300,
+                    endAt: 400
+                })
+            })
+        const payload: ListTasksPayload = { submitterId, taskType: 'leave', leaveType: 'personal' }
+
+        const result = await listTasks(payload)
+
+        expect(result.payload).toEqual([
+            expect.objectContaining({
+                taskId: 'task-2',
+                details: {
+                    leaveType: 'personal',
+                    startAt: 300,
+                    endAt: 400
+                }
+            })
+        ])
+    })
+
     it('skips missing tasks and tasks owned by another submitter', async () => {
         vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['missing-task', 'task-1'])
         vi.spyOn(cacheModule, 'getHashAllFields')
@@ -620,10 +949,39 @@ describe('listTasks', () => {
         expect(result.payload).toEqual([])
     })
 
+    it('skips a task when the stored task ID does not match the index', async () => {
+        vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-1'])
+        const getHashAllFieldsSpy = vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...pendingTaskFields,
+            taskId: 'another-task'
+        })
+
+        const result = await listTasks({ submitterId })
+
+        expect(getHashAllFieldsSpy).toHaveBeenCalledWith('tasks:task-1')
+        expect(result.payload).toEqual([])
+    })
+
     it('throws when both user IDs are provided', async () => {
         const payload = { submitterId, approverId } as unknown as ListTasksPayload
 
         await expect(listTasks(payload)).rejects.toBe('INVALID_LIST_TASKS_USER')
+    })
+
+    it('throws when leaveType is provided without leave taskType', async () => {
+        const getSortedSetMembersSpy = vi.spyOn(cacheModule, 'getSortedSetMembers')
+        const payload = { submitterId, leaveType: 'annual' } as unknown as ListTasksPayload
+
+        await expect(listTasks(payload)).rejects.toBe('INVALID_LIST_TASKS_LEAVE_TYPE_FILTER')
+        expect(getSortedSetMembersSpy).not.toHaveBeenCalled()
+    })
+
+    it('throws when the created time range is invalid', async () => {
+        const getSortedSetMembersSpy = vi.spyOn(cacheModule, 'getSortedSetMembers')
+        const payload: ListTasksPayload = { submitterId, createdAtFrom: 400, createdAtTo: 300 }
+
+        await expect(listTasks(payload)).rejects.toBe('INVALID_LIST_TASKS_CREATED_AT_RANGE')
+        expect(getSortedSetMembersSpy).not.toHaveBeenCalled()
     })
 
     it('throws when the reviewed time range is invalid', async () => {
