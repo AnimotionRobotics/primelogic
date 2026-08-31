@@ -1,5 +1,6 @@
 import { addSortedSetMember, getHashAllFields, getSortedSetMembers, setHash } from '@modules/cache'
 import { getDepartment, getEmployee, getTaskDepartment } from '@modules/organization'
+import { appendTaskHistory } from '@modules/taskHistory'
 import type { ResponseName } from '@commontypes/messageType'
 import type { CancelTaskPayload, CreateTaskPayload, ReviewTaskPayload, RevokeTaskPayload, TaskRecord, TaskStatus, ListTasksPayload, ListTasksResponsePayload} from '@commontypes/taskType'
 import { buildTaskServiceResultPayload, matchesListTaskFilters, parseTaskHashRecord, validateLeaveTaskDetails, validateListTasksPayload } from './taskSupport'
@@ -239,6 +240,22 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
 
     await setHash(taskKey, taskHashRecord)
 
+    // Add created task history
+    await appendTaskHistory(taskRecord.taskId, {
+        requestJobId,
+        action: 'CREATED',
+        operatorId: taskRecord.submitterId,
+        currentStatus: taskRecord.status,
+        createdAt: taskRecord.createdAt,
+        taskType: taskRecord.taskType,
+        submitterId: taskRecord.submitterId,
+        approverIds: taskRecord.approverIds,
+        observerIds: taskRecord.observerIds,
+        title: taskRecord.title,
+        description: taskRecord.description,
+        details: taskRecord.details
+    })
+
     // Add the task to submitter and approver indexes
     const taskIndexSubmitterKey = `tasks:index:submitter:${taskRecord.submitterId}`
 
@@ -260,7 +277,7 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
 
 
 // Cancel a pending task without deleting its saved record
-export const cancelTask = async (payload: CancelTaskPayload): Promise<HandlerResult> => {
+export const cancelTask = async (payload: CancelTaskPayload, requestJobId: string): Promise<HandlerResult> => {
 
     const hasRequiredCancelProperties = 'taskId' in payload && 'submitterId' in payload
 
@@ -278,6 +295,10 @@ export const cancelTask = async (payload: CancelTaskPayload): Promise<HandlerRes
 
     if (payload.reason !== undefined && typeof payload.reason !== 'string') {
         throw 'INVALID_TASK_CANCEL_REASON'
+    }
+
+    if (typeof requestJobId !== 'string' || requestJobId.trim().length === 0) {
+        throw 'INVALID_REQUEST_JOB_ID'
     }
 
     // Load the task
@@ -328,6 +349,16 @@ export const cancelTask = async (payload: CancelTaskPayload): Promise<HandlerRes
 
     await setHash(taskKey, cancelledTaskHashRecord)
 
+    // Add cancelled task history
+    await appendTaskHistory(taskRecord.taskId, {
+        requestJobId,
+        action: 'CANCELLED',
+        operatorId: payload.submitterId,
+        currentStatus: 'CANCELLED',
+        comment: payload.reason,
+        createdAt: cancelledAt
+    })
+
     // Build the response
     const cancelledTaskRecord: TaskRecord = {
         ...taskRecord,
@@ -373,7 +404,7 @@ export const revokeTask = async (payload: RevokeTaskPayload, requestJobId: strin
         throw 'INVALID_REQUEST_JOB_ID'
     }
 
-    // Load the task before validating revocation ownership and state.
+    // Load task
     const taskKey = `tasks:${payload.taskId}`
     let taskHashRecord: Record<string, string>
     try {
@@ -396,7 +427,7 @@ export const revokeTask = async (payload: RevokeTaskPayload, requestJobId: strin
 
     const taskRecord = parseTaskHashRecord(taskHashRecord)
 
-    // Replay the saved result when the same revoke request is delivered again.
+    // Return saved task
     if (taskRecord.status === 'WAITING_REVOKE' && taskRecord.pendingRevokeRequestId === requestJobId) {
         const taskServiceResultPayload = buildTaskServiceResultPayload(taskRecord)
 
@@ -419,7 +450,7 @@ export const revokeTask = async (payload: RevokeTaskPayload, requestJobId: strin
         return { res: 'error', msg: 'TASK_REVOCATION_ALREADY_REQUESTED' }
     }
 
-    // Persist the revocation request and expose its pending approval state.
+    // Save revoke request
     const updatedAt = Date.now()
     const revokedReason = payload.reason ?? ''
 
@@ -427,8 +458,18 @@ export const revokeTask = async (payload: RevokeTaskPayload, requestJobId: strin
         status: 'WAITING_REVOKE',
         pendingRevokeRequestId: requestJobId,
         revokedReason,
-        revokeComment: '', // Clear the review comment left by a previously rejected revocation request
+        revokeComment: '', // Clear old revoke comment
         updatedAt: updatedAt.toString()
+    })
+
+    // Add revoke task history
+    await appendTaskHistory(taskRecord.taskId, {
+        requestJobId,
+        action: 'REVOCATION_REQUESTED',
+        operatorId: payload.submitterId,
+        currentStatus: 'WAITING_REVOKE',
+        comment: payload.reason,
+        createdAt: updatedAt
     })
 
     const revocationWaitingTaskRecord: TaskRecord = {
@@ -455,7 +496,7 @@ export const revokeTask = async (payload: RevokeTaskPayload, requestJobId: strin
 
 
 // Review a task creation or revocation request
-export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerResult> => {
+export const reviewTask = async (payload: ReviewTaskPayload, requestJobId: string): Promise<HandlerResult> => {
 
     const hasRequiredReviewProperties = 'taskId' in payload && 'reviewType' in payload && 'approverId' in payload && 'decision' in payload
 
@@ -487,7 +528,11 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
         throw 'INVALID_REVOKE_REQUEST_ID'
     }
 
-    // Load the task and verify the reviewer before selecting a workflow.
+    if (typeof requestJobId !== 'string' || requestJobId.trim().length === 0) {
+        throw 'INVALID_REQUEST_JOB_ID'
+    }
+
+    // Load task and check approver
     const taskKey = `tasks:${payload.taskId}`
     let taskHashRecord: Record<string, string>
     try {
@@ -510,7 +555,7 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
         return { res: 'error', msg: 'TASK_REVIEW_FORBIDDEN' }
     }
 
-    // Review the initial creation request.
+    // Review task creation
     if (payload.reviewType === 'creation') {
         if (taskRecord.status === 'CANCELLED') {
             return { res: 'error', msg: 'TASK_ALREADY_CANCELLED' }
@@ -534,6 +579,16 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
 
         await setHash(taskKey, reviewedTaskHashRecord)
 
+        // Add creation review history
+        await appendTaskHistory(taskRecord.taskId, {
+            requestJobId,
+            action: reviewStatus === 'APPROVED' ? 'CREATION_APPROVED' : 'CREATION_REJECTED',
+            operatorId: payload.approverId,
+            currentStatus: reviewStatus,
+            comment: payload.comment,
+            createdAt: reviewedAt
+        })
+
         const responseName: ResponseName = reviewStatus === 'APPROVED' ? 'taskApproved' : 'taskRejected'
         const resultMessage = reviewStatus === 'APPROVED' ? 'TASK_APPROVED' : 'TASK_REJECTED'
         const reviewedTaskRecord: TaskRecord = {
@@ -552,7 +607,7 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
         return { res: 'success', msg: resultMessage, responseName, payload: taskServiceResultPayload }
     }
 
-    // Review the currently pending revocation request.
+    // Review task revoke
     if (taskRecord.status === 'REVOKED') {
         return { res: 'error', msg: 'TASK_ALREADY_REVOKED' }
     }
@@ -583,6 +638,16 @@ export const reviewTask = async (payload: ReviewTaskPayload): Promise<HandlerRes
     }
 
     await setHash(taskKey, reviewedTaskHashRecord)
+
+    // Add revoke review history
+    await appendTaskHistory(taskRecord.taskId, {
+        requestJobId,
+        action: reviewStatus === 'REVOKED' ? 'REVOCATION_APPROVED' : 'REVOCATION_REJECTED',
+        operatorId: payload.approverId,
+        currentStatus: reviewStatus,
+        comment: payload.comment,
+        createdAt: reviewedAt
+    })
 
     const reviewedTaskRecord: TaskRecord = {
         ...taskRecord,

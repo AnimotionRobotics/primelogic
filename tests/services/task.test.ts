@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test'
 import * as cacheModule from '@modules/cache'
 import * as organizationModule from '@modules/organization'
+import * as taskHistoryModule from '@modules/taskHistory'
 import { addFileToTask, cancelTask, createTask, listTasks, reviewTask, revokeTask } from '@services/task'
 import { buildTaskServiceResultPayload, parseTaskHashRecord } from '@services/taskSupport'
 import type { AddFileToTaskPayload, CancelTaskPayload, CreateTaskPayload, ListTasksPayload, ReviewTaskPayload, RevokeTaskPayload, TaskRecord } from '@commontypes/taskType'
 
 beforeEach(() => {
     vi.restoreAllMocks()
+    vi.spyOn(taskHistoryModule, 'appendTaskHistory').mockResolvedValue(undefined)
 })
 
 
@@ -220,6 +222,20 @@ describe('createTask', () => {
             details: JSON.stringify(createTaskPayload.details),
             createdAt: '1000',
             updatedAt: '1000'
+        })
+        expect(taskHistoryModule.appendTaskHistory).toHaveBeenCalledWith(taskId, {
+            requestJobId: 'create-job-1',
+            action: 'CREATED',
+            operatorId: 'U0AMWQX3CQG',
+            currentStatus: 'PENDING',
+            createdAt: 1000,
+            taskType: 'leave',
+            submitterId: 'U0AMWQX3CQG',
+            approverIds: ['U0BJR2NMZ6D', 'U0SECONDAPPROVER'],
+            observerIds: ['U0HRADMIN'],
+            title: 'Annual leave',
+            description: 'Family trip',
+            details: createTaskPayload.details
         })
         expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(1, 'tasks:index:submitter:U0AMWQX3CQG', 1000, taskId)
         expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(2, 'tasks:index:approver:U0BJR2NMZ6D', 1000, taskId)
@@ -465,13 +481,21 @@ describe('reviewTask', () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await reviewTask(reviewTaskPayload)
+        const result = await reviewTask(reviewTaskPayload, 'review-job-1')
 
         expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
             status: 'APPROVED',
             updatedAt: '1000',
             reviewedAt: '1000',
             reviewComment: 'Approved'
+        })
+        expect(taskHistoryModule.appendTaskHistory).toHaveBeenCalledWith('task-1', {
+            requestJobId: 'review-job-1',
+            action: 'CREATION_APPROVED',
+            operatorId: 'U0BJR2NMZ6D',
+            currentStatus: 'APPROVED',
+            comment: 'Approved',
+            createdAt: 1000
         })
         expect(result).toEqual({
             res: 'success',
@@ -509,7 +533,7 @@ describe('reviewTask', () => {
             comment: 'Insufficient balance'
         }
 
-        const result = await reviewTask(rejectPayload)
+        const result = await reviewTask(rejectPayload, 'review-job-2')
 
         expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
             status: 'REJECTED',
@@ -520,6 +544,14 @@ describe('reviewTask', () => {
         expect(result.msg).toBe('TASK_REJECTED')
         expect(result.responseName).toBe('taskRejected')
         expect(result.payload).toEqual(expect.objectContaining({ status: 'REJECTED' }))
+        expect(taskHistoryModule.appendTaskHistory).toHaveBeenCalledWith('task-1', {
+            requestJobId: 'review-job-2',
+            action: 'CREATION_REJECTED',
+            operatorId: 'U0BJR2NMZ6D',
+            currentStatus: 'REJECTED',
+            comment: 'Insufficient balance',
+            createdAt: 1000
+        })
     })
 
     it('returns an error when the approver does not match', async () => {
@@ -529,7 +561,7 @@ describe('reviewTask', () => {
         const result = await reviewTask({
             ...reviewTaskPayload,
             approverId: 'another-approver'
-        })
+        }, 'review-job-1')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_REVIEW_FORBIDDEN' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -542,7 +574,7 @@ describe('reviewTask', () => {
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await reviewTask(reviewTaskPayload)
+        const result = await reviewTask(reviewTaskPayload, 'review-job-1')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_ALREADY_REVIEWED' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -555,7 +587,7 @@ describe('reviewTask', () => {
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await reviewTask(reviewTaskPayload)
+        const result = await reviewTask(reviewTaskPayload, 'review-job-1')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_ALREADY_CANCELLED' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -565,7 +597,7 @@ describe('reviewTask', () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await reviewTask(reviewTaskPayload)
+        const result = await reviewTask(reviewTaskPayload, 'review-job-1')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_NOT_FOUND' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -578,7 +610,7 @@ describe('reviewTask', () => {
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await reviewTask(reviewTaskPayload)
+        const result = await reviewTask(reviewTaskPayload, 'review-job-1')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_ID_MISMATCH' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -608,7 +640,7 @@ describe('reviewTask', () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(waitingRevokeTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await reviewTask(revocationReviewPayload)
+        const result = await reviewTask(revocationReviewPayload, 'review-job-3')
 
         expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
             status: 'REVOKED',
@@ -616,6 +648,14 @@ describe('reviewTask', () => {
             revokeComment: 'Revocation approved',
             updatedAt: '1000',
             revokedAt: '1000'
+        })
+        expect(taskHistoryModule.appendTaskHistory).toHaveBeenCalledWith('task-1', {
+            requestJobId: 'review-job-3',
+            action: 'REVOCATION_APPROVED',
+            operatorId: 'U0BJR2NMZ6D',
+            currentStatus: 'REVOKED',
+            comment: 'Revocation approved',
+            createdAt: 1000
         })
         expect(result).toEqual(expect.objectContaining({
             res: 'success',
@@ -640,7 +680,7 @@ describe('reviewTask', () => {
             comment: 'Leave must remain active'
         }
 
-        const result = await reviewTask(rejectPayload)
+        const result = await reviewTask(rejectPayload, 'review-job-4')
 
         expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
             status: 'APPROVED',
@@ -658,6 +698,14 @@ describe('reviewTask', () => {
             })
         }))
         expect(result.payload).not.toEqual(expect.objectContaining({ revokedAt: expect.anything() }))
+        expect(taskHistoryModule.appendTaskHistory).toHaveBeenCalledWith('task-1', {
+            requestJobId: 'review-job-4',
+            action: 'REVOCATION_REJECTED',
+            operatorId: 'U0BJR2NMZ6D',
+            currentStatus: 'APPROVED',
+            comment: 'Leave must remain active',
+            createdAt: 1000
+        })
     })
 
     it('rejects an expired revocation button', async () => {
@@ -667,10 +715,11 @@ describe('reviewTask', () => {
         const result = await reviewTask({
             ...revocationReviewPayload,
             revokeRequestId: 'old-revoke-job'
-        })
+        }, 'review-job-3')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_REVOCATION_REVIEW_EXPIRED' })
         expect(setHashSpy).not.toHaveBeenCalled()
+        expect(taskHistoryModule.appendTaskHistory).not.toHaveBeenCalled()
     })
 
     it('rejects a revocation review when no revocation was requested', async () => {
@@ -680,7 +729,7 @@ describe('reviewTask', () => {
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await reviewTask(revocationReviewPayload)
+        const result = await reviewTask(revocationReviewPayload, 'review-job-3')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_REVOCATION_NOT_REQUESTED' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -721,13 +770,21 @@ describe('cancelTask', () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await cancelTask(cancelTaskPayload)
+        const result = await cancelTask(cancelTaskPayload, 'cancel-job-1')
 
         expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
             status: 'CANCELLED',
             updatedAt: '1000',
             cancelledAt: '1000',
             cancelledReason: 'Plans changed'
+        })
+        expect(taskHistoryModule.appendTaskHistory).toHaveBeenCalledWith('task-1', {
+            requestJobId: 'cancel-job-1',
+            action: 'CANCELLED',
+            operatorId: 'U0AMWQX3CQG',
+            currentStatus: 'CANCELLED',
+            comment: 'Plans changed',
+            createdAt: 1000
         })
         expect(result).toEqual({
             res: 'success',
@@ -765,7 +822,7 @@ describe('cancelTask', () => {
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await cancelTask(cancelTaskPayload)
+        const result = await cancelTask(cancelTaskPayload, 'cancel-job-1')
 
         expect(result).toEqual(expect.objectContaining({
             res: 'success',
@@ -783,7 +840,7 @@ describe('cancelTask', () => {
         const result = await cancelTask({
             ...cancelTaskPayload,
             submitterId: 'another-submitter'
-        })
+        }, 'cancel-job-1')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_CANCEL_FORBIDDEN' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -793,7 +850,7 @@ describe('cancelTask', () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await cancelTask(cancelTaskPayload)
+        const result = await cancelTask(cancelTaskPayload, 'cancel-job-1')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_NOT_FOUND' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -806,7 +863,7 @@ describe('cancelTask', () => {
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await cancelTask(cancelTaskPayload)
+        const result = await cancelTask(cancelTaskPayload, 'cancel-job-1')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_ID_MISMATCH' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -819,7 +876,7 @@ describe('cancelTask', () => {
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await cancelTask(cancelTaskPayload)
+        const result = await cancelTask(cancelTaskPayload, 'cancel-job-1')
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_CANNOT_BE_CANCELLED' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -871,6 +928,14 @@ describe('revokeTask', () => {
             revokedReason: 'Plans changed',
             revokeComment: '',
             updatedAt: '1000'
+        })
+        expect(taskHistoryModule.appendTaskHistory).toHaveBeenCalledWith('task-1', {
+            requestJobId: 'revoke-job-1',
+            action: 'REVOCATION_REQUESTED',
+            operatorId: 'U0AMWQX3CQG',
+            currentStatus: 'WAITING_REVOKE',
+            comment: 'Plans changed',
+            createdAt: 1000
         })
         expect(result).toEqual(expect.objectContaining({
             res: 'success',

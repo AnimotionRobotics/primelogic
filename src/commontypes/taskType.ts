@@ -116,6 +116,42 @@ export type TaskRecord = {
     revokeComment?: string
 }
 
+export const supportedTaskHistoryActions = ['CREATED', 'CANCELLED', 'CREATION_APPROVED', 'CREATION_REJECTED', 'REVOCATION_REQUESTED', 'REVOCATION_APPROVED', 'REVOCATION_REJECTED'] as const
+
+export type TaskHistoryAction = typeof supportedTaskHistoryActions[number]
+
+// Task history fields
+type TaskHistoryRecordBase = {
+    sequence: number,
+    requestJobId: string,
+    action: TaskHistoryAction,
+    operatorId: string,
+    currentStatus: TaskStatus,
+    createdAt: number,
+    comment?: string
+}
+
+// Fields for created tasks
+type TaskCreatedHistoryFields = {
+    taskType: TaskType,
+    submitterId: string,
+    approverIds: string[],
+    observerIds: string[],
+    title: string,
+    description?: string,
+    details: TaskDetails
+}
+
+type TaskHistoryActionFields =
+    | ({ action: 'CREATED' } & TaskCreatedHistoryFields)
+    | { action: Exclude<TaskHistoryAction, 'CREATED'> } // Exclude 'CREATED' from TaskHistoryAction
+
+// Saved task history record
+export type TaskHistoryRecord = TaskHistoryRecordBase & TaskHistoryActionFields
+
+// Task history input
+export type AppendTaskHistoryInput = Omit<TaskHistoryRecordBase, 'sequence'> & TaskHistoryActionFields
+
 export type TaskServiceResultPayload = {
     taskId: string,
     taskType: TaskType,

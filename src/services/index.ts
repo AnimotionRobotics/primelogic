@@ -49,9 +49,9 @@ export const serviceRoute = async (funcName: JobName, payload: JobPayload, reque
     // Call service according to funcName
     handlerResult = funcName === 'addFileToTask' ? await addFileToTask(payload) : handlerResult
     handlerResult = funcName === 'createTask' ? await createTask(payload as CreateTaskPayload, requestJobId) : handlerResult
-    handlerResult = funcName === 'reviewTask' ? await reviewTask(payload as ReviewTaskPayload) : handlerResult
+    handlerResult = funcName === 'reviewTask' ? await reviewTask(payload as ReviewTaskPayload, requestJobId) : handlerResult
     handlerResult = funcName === 'listTasks' ? await listTasks(payload as ListTasksPayload) : handlerResult
-    handlerResult = funcName === 'cancelTask' ? await cancelTask(payload as CancelTaskPayload) : handlerResult
+    handlerResult = funcName === 'cancelTask' ? await cancelTask(payload as CancelTaskPayload, requestJobId) : handlerResult
     handlerResult = funcName === 'revokeTask' ? await revokeTask(payload as RevokeTaskPayload, requestJobId) : handlerResult
 
     if (!handlerResult) {
