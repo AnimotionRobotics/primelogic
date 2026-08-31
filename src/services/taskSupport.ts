@@ -1,6 +1,7 @@
 import type { ResponseName } from '@commontypes/messageType'
 import { supportedLeaveTypes } from '@commontypes/leaveTaskType'
-import type { TaskDetails, TaskRecord, TaskResponsePayload, TaskServiceResultPayload, TaskStatus, TaskType } from '@commontypes/taskType'
+import { supportedTaskStatuses, supportedTaskTypes } from '@commontypes/taskType'
+import type { ListTasksPayload, TaskDetails, TaskRecord, TaskResponsePayload, TaskServiceResultPayload, TaskStatus, TaskType } from '@commontypes/taskType'
 
 
 
@@ -12,12 +13,6 @@ export type HandlerResult = {
     responseName?: ResponseName,
     payload?: TaskResponsePayload,
     next?: 'retry' | 'notify'
-}
-
-
-// Set observer departments for each task type
-export const taskObserverDepartmentIds: Record<TaskType, string[]> = {
-    leave: ['HR']
 }
 
 
@@ -44,36 +39,157 @@ export const validateLeaveTaskDetails = (details: TaskDetails): void => {
 }
 
 
-// Convert saved Redis Hash fields back to a task record
-export const parseTaskRecord = (taskFields: Record<string, string>): TaskRecord => {
+// Validate supported task list filters and time ranges
+export const validateListTasksPayload = (payload: ListTasksPayload): void => {
+    const hasSubmitterId = payload.submitterId !== undefined
+    const hasApproverId = payload.approverId !== undefined
+
+    if (hasSubmitterId === hasApproverId) {
+        throw 'INVALID_LIST_TASKS_USER'
+    }
+
+    if (payload.submitterId !== undefined && (typeof payload.submitterId !== 'string' || payload.submitterId.trim().length === 0)) {
+        throw 'INVALID_LIST_TASKS_SUBMITTER_ID'
+    }
+
+    if (payload.approverId !== undefined && (typeof payload.approverId !== 'string' || payload.approverId.trim().length === 0)) {
+        throw 'INVALID_LIST_TASKS_APPROVER_ID'
+    }
+
+    if (payload.taskId !== undefined && (typeof payload.taskId !== 'string' || payload.taskId.trim().length === 0)) {
+        throw 'INVALID_LIST_TASKS_TASK_ID'
+    }
+
+    if (payload.taskType !== undefined && !supportedTaskTypes.includes(payload.taskType)) {
+        throw 'INVALID_LIST_TASKS_TASK_TYPE'
+    }
+
+    if (payload.status !== undefined && !supportedTaskStatuses.includes(payload.status)) {
+        throw 'INVALID_LIST_TASKS_STATUS'
+    }
+
+    if (payload.leaveType !== undefined && payload.taskType !== 'leave') {
+        throw 'INVALID_LIST_TASKS_LEAVE_TYPE_FILTER'
+    }
+
+    if (payload.leaveType !== undefined && !supportedLeaveTypes.includes(payload.leaveType)) {
+        throw 'INVALID_LIST_TASKS_LEAVE_TYPE'
+    }
+
+    if (payload.createdAtFrom !== undefined && !Number.isFinite(payload.createdAtFrom)) {
+        throw 'INVALID_LIST_TASKS_CREATED_AT_FROM'
+    }
+
+    if (payload.createdAtTo !== undefined && !Number.isFinite(payload.createdAtTo)) {
+        throw 'INVALID_LIST_TASKS_CREATED_AT_TO'
+    }
+
+    if (payload.createdAtFrom !== undefined && payload.createdAtTo !== undefined && payload.createdAtFrom > payload.createdAtTo) {
+        throw 'INVALID_LIST_TASKS_CREATED_AT_RANGE'
+    }
+
+    if (payload.reviewedAtFrom !== undefined && !Number.isFinite(payload.reviewedAtFrom)) {
+        throw 'INVALID_LIST_TASKS_REVIEWED_AT_FROM'
+    }
+
+    if (payload.reviewedAtTo !== undefined && !Number.isFinite(payload.reviewedAtTo)) {
+        throw 'INVALID_LIST_TASKS_REVIEWED_AT_TO'
+    }
+
+    if (payload.reviewedAtFrom !== undefined && payload.reviewedAtTo !== undefined && payload.reviewedAtFrom > payload.reviewedAtTo) {
+        throw 'INVALID_LIST_TASKS_REVIEWED_AT_RANGE'
+    }
+}
+
+
+// Check whether a task record matches the requested list filters
+export const matchesListTaskFilters = (taskRecord: TaskRecord, payload: ListTasksPayload): boolean => {
+    if (payload.taskType !== undefined && taskRecord.taskType !== payload.taskType) {
+        return false
+    }
+
+    if (payload.status !== undefined && taskRecord.status !== payload.status) {
+        return false
+    }
+
+    if (payload.leaveType !== undefined && taskRecord.taskType === 'leave' && taskRecord.details.leaveType !== payload.leaveType) {
+        return false
+    }
+
+    if (payload.createdAtFrom !== undefined && taskRecord.createdAt < payload.createdAtFrom) {
+        return false
+    }
+
+    if (payload.createdAtTo !== undefined && taskRecord.createdAt > payload.createdAtTo) {
+        return false
+    }
+
+    if (payload.reviewedAtFrom !== undefined && (taskRecord.reviewedAt === undefined || taskRecord.reviewedAt < payload.reviewedAtFrom)) {
+        return false
+    }
+
+    if (payload.reviewedAtTo !== undefined && (taskRecord.reviewedAt === undefined || taskRecord.reviewedAt > payload.reviewedAtTo)) {
+        return false
+    }
+
+    return true
+}
+
+
+// Convert a saved Redis Hash record back to a task record
+export const parseTaskHashRecord = (taskHashRecord: Record<string, string>): TaskRecord => {
     const taskRecord: TaskRecord = {
-        taskId: taskFields.taskId,
-        taskType: taskFields.taskType as TaskType,
-        status: taskFields.status as TaskStatus,
+        taskId: taskHashRecord.taskId,
+        taskType: taskHashRecord.taskType as TaskType,
+        status: taskHashRecord.status as TaskStatus,
 
-        sourceJobId: taskFields.sourceJobId,
+        sourceJobId: taskHashRecord.sourceJobId,
 
-        submitterId: taskFields.submitterId,
-        approverIds: JSON.parse(taskFields.approverIds) as string[],
-        observerIds: JSON.parse(taskFields.observerIds) as string[],
+        submitterId: taskHashRecord.submitterId,
+        approverIds: JSON.parse(taskHashRecord.approverIds) as string[],
+        observerIds: JSON.parse(taskHashRecord.observerIds) as string[],
 
-        title: taskFields.title,
-        details: JSON.parse(taskFields.details) as TaskDetails,
+        title: taskHashRecord.title,
+        details: JSON.parse(taskHashRecord.details) as TaskDetails,
 
-        createdAt: Number(taskFields.createdAt),
-        updatedAt: Number(taskFields.updatedAt)
+        createdAt: Number(taskHashRecord.createdAt),
+        updatedAt: Number(taskHashRecord.updatedAt)
     }
 
-    if (taskFields.description !== undefined) {
-        taskRecord.description = taskFields.description
+    if (taskHashRecord.description !== undefined) {
+        taskRecord.description = taskHashRecord.description
     }
 
-    if (taskFields.reviewedAt !== undefined) {
-        taskRecord.reviewedAt = Number(taskFields.reviewedAt)
+    if (taskHashRecord.reviewedAt !== undefined) {
+        taskRecord.reviewedAt = Number(taskHashRecord.reviewedAt)
     }
 
-    if (taskFields.reviewComment !== undefined) {
-        taskRecord.reviewComment = taskFields.reviewComment
+    if (taskHashRecord.reviewComment !== undefined) {
+        taskRecord.reviewComment = taskHashRecord.reviewComment
+    }
+
+    if (taskHashRecord.pendingRevokeRequestId) {
+        taskRecord.pendingRevokeRequestId = taskHashRecord.pendingRevokeRequestId
+    }
+
+    if (taskHashRecord.cancelledAt !== undefined) {
+        taskRecord.cancelledAt = Number(taskHashRecord.cancelledAt)
+    }
+
+    if (taskHashRecord.cancelledReason !== undefined) {
+        taskRecord.cancelledReason = taskHashRecord.cancelledReason
+    }
+
+    if (taskHashRecord.revokedAt !== undefined) {
+        taskRecord.revokedAt = Number(taskHashRecord.revokedAt)
+    }
+
+    if (taskHashRecord.revokedReason) {
+        taskRecord.revokedReason = taskHashRecord.revokedReason
+    }
+
+    if (taskHashRecord.revokeComment) {
+        taskRecord.revokeComment = taskHashRecord.revokeComment
     }
 
     return taskRecord
@@ -108,6 +224,26 @@ export const buildTaskServiceResultPayload = (taskRecord: TaskRecord): TaskServi
 
     if (taskRecord.reviewComment !== undefined) {
         taskServiceResultPayload.reviewComment = taskRecord.reviewComment
+    }
+
+    if (taskRecord.cancelledAt !== undefined) {
+        taskServiceResultPayload.cancelledAt = taskRecord.cancelledAt
+    }
+
+    if (taskRecord.cancelledReason !== undefined) {
+        taskServiceResultPayload.cancelledReason = taskRecord.cancelledReason
+    }
+
+    if (taskRecord.revokedAt !== undefined) {
+        taskServiceResultPayload.revokedAt = taskRecord.revokedAt
+    }
+
+    if (taskRecord.revokedReason !== undefined) {
+        taskServiceResultPayload.revokedReason = taskRecord.revokedReason
+    }
+
+    if (taskRecord.revokeComment !== undefined) {
+        taskServiceResultPayload.revokeComment = taskRecord.revokeComment
     }
 
     return taskServiceResultPayload

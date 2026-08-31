@@ -1,3 +1,5 @@
+import type { TaskType } from './taskType'
+
 export type Employee = {
     slackUserId: string,
     name: string,
@@ -10,7 +12,15 @@ export type Employee = {
 export type Department = {
     departmentId: string,
     name: string,
-    adminSlackUserId: string,
+    adminSlackUserIds: string[],
+    createdAt: number,
+    updatedAt: number
+}
+
+
+export type TaskDepartment = {
+    taskType: TaskType,
+    departmentId: string,
     createdAt: number,
     updatedAt: number
 }

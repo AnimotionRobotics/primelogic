@@ -15,11 +15,3 @@ export type CreateLeaveTaskPayload = {
     submitterId: string,
     details: LeaveTaskDetails
 }
-
-export type UpdateLeaveTaskPayload = {
-    taskId: string,
-    submitterId: string,
-    title: string,
-    description?: string,
-    details: LeaveTaskDetails
-}

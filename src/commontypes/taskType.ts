@@ -1,11 +1,11 @@
-import type { CreateLeaveTaskPayload, LeaveTaskDetails, LeaveType, UpdateLeaveTaskPayload } from '@commontypes/leaveTaskType'
+import type { CreateLeaveTaskPayload, LeaveTaskDetails, LeaveType } from '@commontypes/leaveTaskType'
 
 export const supportedTaskTypes = ['leave'] as const
 
 export type TaskType = typeof supportedTaskTypes[number]
 
 
-export const supportedTaskStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'DELETED'] as const
+export const supportedTaskStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'WAITING_REVOKE', 'REVOKED'] as const
 
 export type TaskStatus = typeof supportedTaskStatuses[number]
 
@@ -21,20 +21,36 @@ export type AddFileToTaskPayload = {
 
 export type CreateTaskPayload = CreateLeaveTaskPayload
 
-export type UpdateTaskPayload = UpdateLeaveTaskPayload
-
 export type ReviewDecision = 'approve' | 'reject'
 
-export type ReviewTaskPayload = {
+type ReviewTaskPayloadBase = {
     taskId: string,
     approverId: string,
     decision: ReviewDecision,
     comment?: string
 }
 
-export type DeleteTaskPayload = {
+export type ReviewCreationTaskPayload = ReviewTaskPayloadBase & {
+    reviewType: 'creation'
+}
+
+export type ReviewRevocationTaskPayload = ReviewTaskPayloadBase & {
+    reviewType: 'revocation',
+    revokeRequestId: string
+}
+
+export type ReviewTaskPayload = ReviewCreationTaskPayload | ReviewRevocationTaskPayload
+
+export type CancelTaskPayload = {
     taskId: string,
-    submitterId: string
+    submitterId: string,
+    reason?: string
+}
+
+export type RevokeTaskPayload = {
+    taskId: string,
+    submitterId: string,
+    reason?: string
 }
 
 type ListTasksFilter = {
@@ -88,7 +104,16 @@ export type TaskRecord = {
     updatedAt: number,
 
     reviewedAt?: number,
-    reviewComment?: string
+    reviewComment?: string,
+
+    pendingRevokeRequestId?: string,
+
+    cancelledAt?: number,
+    cancelledReason?: string,
+
+    revokedAt?: number,
+    revokedReason?: string,
+    revokeComment?: string
 }
 
 export type TaskServiceResultPayload = {
@@ -108,7 +133,14 @@ export type TaskServiceResultPayload = {
     updatedAt: number,
 
     reviewedAt?: number,
-    reviewComment?: string
+    reviewComment?: string,
+
+    cancelledAt?: number,
+    cancelledReason?: string,
+
+    revokedAt?: number,
+    revokedReason?: string,
+    revokeComment?: string
 }
 
 export type ListTasksResponsePayload = TaskServiceResultPayload[]
@@ -117,5 +149,6 @@ export type AddFileToTaskResponsePayload = {
     fileId: string,
     taskIds: string[]
 }
+
 
 export type TaskResponsePayload = AddFileToTaskResponsePayload | TaskServiceResultPayload | ListTasksResponsePayload

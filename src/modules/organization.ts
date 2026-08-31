@@ -1,4 +1,6 @@
-import type { Department, Employee } from '@commontypes/organizationType'
+import type { Department, Employee, TaskDepartment } from '@commontypes/organizationType'
+import { supportedTaskTypes } from '@commontypes/taskType'
+import type { TaskType } from '@commontypes/taskType'
 import { getHashAllFields, setHash } from '@modules/cache'
 
 
@@ -34,20 +36,20 @@ export const getEmployee = async (slackUserId: string): Promise<Employee> => {
 
     if (!slackUserId) throw 'MISSING_EMPLOYEE_SLACK_USER_ID'
 
-    const employeeFields = await getHashAllFields(`employees:${slackUserId}`)
-    const createdAt = Number(employeeFields.createdAt)
-    const updatedAt = Number(employeeFields.updatedAt)
+    const employeeHashRecord = await getHashAllFields(`employees:${slackUserId}`)
+    const createdAt = Number(employeeHashRecord.createdAt)
+    const updatedAt = Number(employeeHashRecord.updatedAt)
 
-    if (employeeFields.slackUserId !== slackUserId) throw 'INVALID_EMPLOYEE_RECORD'
-    if (!employeeFields.name || !employeeFields.departmentId) throw 'INVALID_EMPLOYEE_RECORD'
-    if (employeeFields.isActive !== 'true' && employeeFields.isActive !== 'false') throw 'INVALID_EMPLOYEE_RECORD'
+    if (employeeHashRecord.slackUserId !== slackUserId) throw 'INVALID_EMPLOYEE_RECORD'
+    if (!employeeHashRecord.name || !employeeHashRecord.departmentId) throw 'INVALID_EMPLOYEE_RECORD'
+    if (employeeHashRecord.isActive !== 'true' && employeeHashRecord.isActive !== 'false') throw 'INVALID_EMPLOYEE_RECORD'
     if (!Number.isFinite(createdAt) || !Number.isFinite(updatedAt) || updatedAt < createdAt) throw 'INVALID_EMPLOYEE_RECORD'
 
     return {
-        slackUserId: employeeFields.slackUserId,
-        name: employeeFields.name,
-        departmentId: employeeFields.departmentId,
-        isActive: employeeFields.isActive === 'true',
+        slackUserId: employeeHashRecord.slackUserId,
+        name: employeeHashRecord.name,
+        departmentId: employeeHashRecord.departmentId,
+        isActive: employeeHashRecord.isActive === 'true',
         createdAt,
         updatedAt
     }
@@ -63,14 +65,15 @@ export const setDepartment = async (department: Department): Promise<void> => {
     if (!department) throw 'MISSING_PARAMETER_DEPARTMENT'
     if (!department.departmentId) throw 'MISSING_DEPARTMENT_ID'
     if (!department.name) throw 'MISSING_DEPARTMENT_NAME'
-    if (!department.adminSlackUserId) throw 'MISSING_DEPARTMENT_ADMIN_SLACK_USER_ID'
+    if (!Array.isArray(department.adminSlackUserIds) || department.adminSlackUserIds.length === 0) throw 'MISSING_DEPARTMENT_ADMIN_SLACK_USER_IDS'
+    if (department.adminSlackUserIds.some((adminSlackUserId) => typeof adminSlackUserId !== 'string' || adminSlackUserId.trim().length === 0)) throw 'INVALID_DEPARTMENT_ADMIN_SLACK_USER_IDS'
     if (!Number.isFinite(department.createdAt) || !Number.isFinite(department.updatedAt)) throw 'INVALID_DEPARTMENT_TIME'
     if (department.updatedAt < department.createdAt) throw 'INVALID_DEPARTMENT_TIME'
 
     await setHash(`departments:${department.departmentId}`, {
         departmentId: department.departmentId,
         name: department.name,
-        adminSlackUserId: department.adminSlackUserId,
+        adminSlackUserIds: JSON.stringify(department.adminSlackUserIds),
         createdAt: department.createdAt.toString(),
         updatedAt: department.updatedAt.toString()
     })
@@ -85,18 +88,72 @@ export const getDepartment = async (departmentId: string): Promise<Department> =
 
     if (!departmentId) throw 'MISSING_DEPARTMENT_ID'
 
-    const departmentFields = await getHashAllFields(`departments:${departmentId}`)
-    const createdAt = Number(departmentFields.createdAt)
-    const updatedAt = Number(departmentFields.updatedAt)
+    const departmentHashRecord = await getHashAllFields(`departments:${departmentId}`)
+    const createdAt = Number(departmentHashRecord.createdAt)
+    const updatedAt = Number(departmentHashRecord.updatedAt)
+    let adminSlackUserIds: unknown
 
-    if (departmentFields.departmentId !== departmentId) throw 'INVALID_DEPARTMENT_RECORD'
-    if (!departmentFields.name || !departmentFields.adminSlackUserId) throw 'INVALID_DEPARTMENT_RECORD'
+    try {
+        adminSlackUserIds = JSON.parse(departmentHashRecord.adminSlackUserIds)
+    } catch (error) {
+        throw 'INVALID_DEPARTMENT_RECORD'
+    }
+
+    if (departmentHashRecord.departmentId !== departmentId) throw 'INVALID_DEPARTMENT_RECORD'
+    if (!departmentHashRecord.name || !Array.isArray(adminSlackUserIds) || adminSlackUserIds.length === 0) throw 'INVALID_DEPARTMENT_RECORD'
+    if (adminSlackUserIds.some((adminSlackUserId) => typeof adminSlackUserId !== 'string' || adminSlackUserId.trim().length === 0)) throw 'INVALID_DEPARTMENT_RECORD'
     if (!Number.isFinite(createdAt) || !Number.isFinite(updatedAt) || updatedAt < createdAt) throw 'INVALID_DEPARTMENT_RECORD'
 
     return {
-        departmentId: departmentFields.departmentId,
-        name: departmentFields.name,
-        adminSlackUserId: departmentFields.adminSlackUserId,
+        departmentId: departmentHashRecord.departmentId,
+        name: departmentHashRecord.name,
+        adminSlackUserIds,
+        createdAt,
+        updatedAt
+    }
+
+}
+
+
+
+
+// Save the observer department assigned to a task type
+export const setTaskDepartment = async (taskDepartment: TaskDepartment): Promise<void> => {
+
+    if (!taskDepartment) throw 'MISSING_PARAMETER_TASK_DEPARTMENT'
+    if (!supportedTaskTypes.includes(taskDepartment.taskType)) throw 'INVALID_TASK_DEPARTMENT_TASK_TYPE'
+    if (!taskDepartment.departmentId) throw 'MISSING_TASK_DEPARTMENT_ID'
+    if (!Number.isFinite(taskDepartment.createdAt) || !Number.isFinite(taskDepartment.updatedAt)) throw 'INVALID_TASK_DEPARTMENT_TIME'
+    if (taskDepartment.updatedAt < taskDepartment.createdAt) throw 'INVALID_TASK_DEPARTMENT_TIME'
+
+    await setHash(`taskDepartments:${taskDepartment.taskType}`, {
+        taskType: taskDepartment.taskType,
+        departmentId: taskDepartment.departmentId,
+        createdAt: taskDepartment.createdAt.toString(),
+        updatedAt: taskDepartment.updatedAt.toString()
+    })
+
+}
+
+
+
+
+// Load the observer department assigned to a task type
+export const getTaskDepartment = async (taskType: TaskType): Promise<TaskDepartment> => {
+
+    if (!supportedTaskTypes.includes(taskType)) throw 'INVALID_TASK_DEPARTMENT_TASK_TYPE'
+
+    const taskDepartmentHashRecord = await getHashAllFields(`taskDepartments:${taskType}`)
+    const createdAt = Number(taskDepartmentHashRecord.createdAt)
+    const updatedAt = Number(taskDepartmentHashRecord.updatedAt)
+
+    if (taskDepartmentHashRecord.taskType !== taskType) throw 'INVALID_TASK_DEPARTMENT_RECORD'
+    if (!taskDepartmentHashRecord.departmentId) throw 'INVALID_TASK_DEPARTMENT_RECORD'
+    if (!Number.isFinite(createdAt) || !Number.isFinite(updatedAt) || updatedAt < createdAt) throw 'INVALID_TASK_DEPARTMENT_RECORD'
+
+    return {
+        taskType,
+        departmentId: taskDepartmentHashRecord.departmentId,
         createdAt,
         updatedAt
     }

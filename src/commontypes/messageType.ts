@@ -1,11 +1,10 @@
-import type { AddFileToTaskPayload, CreateTaskPayload, DeleteTaskPayload, ReviewTaskPayload, UpdateTaskPayload, TaskResponsePayload, ListTasksPayload } from '@commontypes/taskType';
+import type { AddFileToTaskPayload, CreateTaskPayload, ReviewTaskPayload, TaskResponsePayload, ListTasksPayload, CancelTaskPayload, RevokeTaskPayload } from '@commontypes/taskType';
 
-export const supportedJobNames = ['addFileToTask', 'createTask', 'reviewTask', 'updateTask', 'listTasks', 'deleteTask'] as const
+export const supportedJobNames = ['addFileToTask', 'createTask', 'reviewTask', 'listTasks', 'cancelTask', 'revokeTask'] as const
 
 export type JobName = typeof supportedJobNames[number]
 
-export type JobPayload = AddFileToTaskPayload | CreateTaskPayload | ReviewTaskPayload | UpdateTaskPayload | ListTasksPayload | DeleteTaskPayload
-
+export type JobPayload = AddFileToTaskPayload | CreateTaskPayload | ReviewTaskPayload | ListTasksPayload | CancelTaskPayload | RevokeTaskPayload
 export type JobMessage = {
     name: JobName,
     createdAt: number,
@@ -21,7 +20,7 @@ export type ConsumedJobMessage = JobMessage & {
     jobId: string,
 }
 
-export type ResponseName = 'taskCreated'| 'taskApproved' | 'taskRejected'| 'taskOperationFailed' | 'fileAddedToTask' | 'taskUpdated' | 'taskListed' | 'taskDeleted'
+export type ResponseName = 'taskCreated'| 'taskApproved' | 'taskRejected'| 'taskOperationFailed' | 'fileAddedToTask' | 'taskListed' | 'taskCancelled' | 'taskRevocationWaiting' | 'taskRevocationRejected' | 'taskRevoked'
 
 export type ResponseMessageBase = {
     requestJobId: string,

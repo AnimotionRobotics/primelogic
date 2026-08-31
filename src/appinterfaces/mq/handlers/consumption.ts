@@ -205,9 +205,9 @@ export const onDispatchResponse = async (message: ConsumedJobMessage, serviceRes
     }
 
     // Convert response values to Redis Hash strings
-    const responseFields: Record<string, string> = {}
+    const responseHashRecord: Record<string, string> = {}
     for (const [field, value] of Object.entries(responseMessage)) {
-        responseFields[field] = typeof value === 'object' ? JSON.stringify(value) : String(value)
+        responseHashRecord[field] = typeof value === 'object' ? JSON.stringify(value) : String(value)
     }
 
     const maxDispatchRetry = 3
@@ -218,7 +218,7 @@ export const onDispatchResponse = async (message: ConsumedJobMessage, serviceRes
     while (true) {
         try {
             responseStage = 'save'
-            await setHash(`responses:${responseId}`, responseFields)
+            await setHash(`responses:${responseId}`, responseHashRecord)
 
             responseStage = 'dispatch'
             await dispatchMessage(config.responseStreamKey, responseId)

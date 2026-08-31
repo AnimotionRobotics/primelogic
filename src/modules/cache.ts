@@ -191,20 +191,20 @@ export const decrementNumber = async (key: string): Promise<number> => {
 
 
 // Set multiple fields in a hash
-export const setHash = async (key: string, fields: Record<string, string>) => {
+export const setHash = async (key: string, hashRecord: Record<string, string>) => {
 
 	if (!cacheClient) throw 'CACHE_CLIENT_NOT_INITIALIZED'
 	if (!key) throw 'CACHE_KEY_REQUIRED'
 	if (typeof key !== 'string') throw 'CACHE_KEY_MUST_BE_STRING'
-	if (!fields || typeof fields !== 'object') throw 'HASH_FIELDS_REQUIRED'
+	if (!hashRecord || typeof hashRecord !== 'object') throw 'HASH_FIELDS_REQUIRED'
 
-	const flatFields: string[] = []
-	for (const [field, value] of Object.entries(fields)) {
-		flatFields.push(field, value)
+	const hashFields: string[] = []
+	for (const [field, value] of Object.entries(hashRecord)) {
+		hashFields.push(field, value)
 	}
 
 	try {
-		await cacheClient.hmset(key, flatFields)
+		await cacheClient.hmset(key, hashFields)
 	} catch (err) {
 		throw 'SET_HASH_FAILED'
 	}
@@ -239,16 +239,16 @@ export const getHashField = async (key: string, field: string): Promise<string |
 
 
 // Get multiple fields from hash
-export const getHashFields = async (key: string, fields: string[]): Promise<(string | null)[]> => {
+export const getHashFields = async (key: string, fieldNames: string[]): Promise<(string | null)[]> => {
 
 	if (!cacheClient) throw 'CACHE_CLIENT_NOT_INITIALIZED'
 	if (!key) throw 'CACHE_KEY_REQUIRED'
 	if (typeof key !== 'string') throw 'CACHE_KEY_MUST_BE_STRING'
-	if (!fields || !Array.isArray(fields)) throw 'HASH_FIELDS_REQUIRED'
+	if (!fieldNames || !Array.isArray(fieldNames)) throw 'HASH_FIELDS_REQUIRED'
 
 	let values: (string | null)[]
 	try {
-		values = await cacheClient.hmget(key, fields)
+		values = await cacheClient.hmget(key, fieldNames)
 	} catch (err) {
 		throw 'GET_HASH_FIELDS_FAILED'
 	}
@@ -270,17 +270,17 @@ export const getHashAllFields = async (key: string) => {
 	if (!cacheClient) throw 'CACHE_CLIENT_NOT_INITIALIZED'
     if (!key) throw 'MISSING_PARAMETER_KEY'
 
-    let res
+    let hashRecord
     try {
-        res = await cacheClient.hgetall(key)
+        hashRecord = await cacheClient.hgetall(key)
     }catch(e){
         console.error('Error cacheClient.hgetall(), e: ', e)
         throw 'ERROR_GET_ALL_HASH_FIELDS'
     }
 
-    if (Object.keys(res).length === 0) throw 'NO_RECORD_FOUND'
+    if (Object.keys(hashRecord).length === 0) throw 'NO_RECORD_FOUND'
 
-    return res
+    return hashRecord
 
 }
 
@@ -496,7 +496,7 @@ export const getJson = async (key: string, path?: string) => {
 }
 
 // Delete multiple fields from a hash
-export const deleteHashFields  = async (key: string, fields:string[]): Promise<void> => {
+export const deleteHashFields  = async (key: string, fieldNames:string[]): Promise<void> => {
 	if (!cacheClient) {
 		throw 'CACHE_CLIENT_NOT_INITIALIZED'
 	}
@@ -505,13 +505,13 @@ export const deleteHashFields  = async (key: string, fields:string[]): Promise<v
 		throw 'CACHE_KEY_REQUIRED'
 	}
 
-	if (!Array.isArray(fields) || fields.length ===0) {
+	if (!Array.isArray(fieldNames) || fieldNames.length ===0) {
 		throw 'HASH_FIELDS_REQUIRED'
 	}
 
 	try {
 		// HDEL requires one field first, then accepts any remaining fields
-		await cacheClient.hdel(key, fields[0], ...fields.slice(1))
+		await cacheClient.hdel(key, fieldNames[0], ...fieldNames.slice(1))
 	} catch {
 		throw 'DELETE_HASH_FIELDS_FAILED'
 	}

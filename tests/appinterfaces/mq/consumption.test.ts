@@ -38,7 +38,7 @@ describe('onGetMessage', () => {
         dlqStreamKey: 'jobs:dlq'
     }
 
-    const jobFields: Record<string, string> = {
+    const jobHashRecord: Record<string, string> = {
         name: 'createTask',
         createdAt: '100',
         createdBy: 'slack-socket',
@@ -60,7 +60,7 @@ describe('onGetMessage', () => {
 
     it('loads the Job record after reading its Stream reference', async () => {
         const getMessageSpy = vi.spyOn(mqModule, 'getMessage').mockResolvedValue({ streamMessageId: '1-0', jobId: 'job-1' })
-        const getHashAllFieldsSpy = vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(jobFields)
+        const getHashAllFieldsSpy = vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(jobHashRecord)
         vi.spyOn(loggerModule, 'logEvent').mockImplementation(() => undefined)
 
         const result = await onGetMessage(config)
@@ -82,7 +82,7 @@ describe('onGetMessage', () => {
                 retried: 0,
                 maxRetry: 3,
                 lastTriedAt: 100,
-                payload: JSON.parse(jobFields.payload)
+                payload: JSON.parse(jobHashRecord.payload)
             }
         })
     })

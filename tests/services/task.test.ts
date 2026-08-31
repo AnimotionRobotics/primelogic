@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test'
 import * as cacheModule from '@modules/cache'
 import * as organizationModule from '@modules/organization'
-import { addFileToTask, createTask, deleteTask, listTasks, reviewTask, updateTask } from '@services/task'
-import { buildTaskServiceResultPayload, parseTaskRecord } from '@services/taskSupport'
-import type { AddFileToTaskPayload, CreateTaskPayload, DeleteTaskPayload, ListTasksPayload, ReviewTaskPayload, TaskRecord, UpdateTaskPayload } from '@commontypes/taskType'
+import { addFileToTask, cancelTask, createTask, listTasks, reviewTask, revokeTask } from '@services/task'
+import { buildTaskServiceResultPayload, parseTaskHashRecord } from '@services/taskSupport'
+import type { AddFileToTaskPayload, CancelTaskPayload, CreateTaskPayload, ListTasksPayload, ReviewTaskPayload, RevokeTaskPayload, TaskRecord } from '@commontypes/taskType'
 
 beforeEach(() => {
     vi.restoreAllMocks()
@@ -12,7 +12,7 @@ beforeEach(() => {
 
 describe('taskRecord', () => {
     it('parses Redis Hash fields and builds a task service payload', () => {
-        const taskFields: Record<string, string> = {
+        const taskHashRecord: Record<string, string> = {
             taskId: 'task-1',
             taskType: 'leave',
             status: 'APPROVED',
@@ -33,7 +33,7 @@ describe('taskRecord', () => {
             reviewComment: 'Approved'
         }
 
-        const taskRecord: TaskRecord = parseTaskRecord(taskFields)
+        const taskRecord: TaskRecord = parseTaskHashRecord(taskHashRecord)
         const payload = buildTaskServiceResultPayload(taskRecord)
 
         expect(taskRecord).toEqual({
@@ -153,7 +153,7 @@ describe('createTask', () => {
 
     const createTaskId = Bun.hash('task:create-job-1').toString()
 
-    const existingTaskFields: Record<string, string> = {
+    const existingTaskHashRecord: Record<string, string> = {
         taskId: createTaskId,
         taskType: 'leave',
         status: 'PENDING',
@@ -179,18 +179,24 @@ describe('createTask', () => {
             createdAt: 100,
             updatedAt: 100
         })
+        vi.spyOn(organizationModule, 'getTaskDepartment').mockResolvedValue({
+            taskType: 'leave',
+            departmentId: 'HR',
+            createdAt: 100,
+            updatedAt: 100
+        })
         vi.spyOn(organizationModule, 'getDepartment')
             .mockResolvedValueOnce({
                 departmentId: 'R&D',
                 name: 'Research and Development',
-                adminSlackUserId: 'U0BJR2NMZ6D',
+                adminSlackUserIds: ['U0BJR2NMZ6D', 'U0SECONDAPPROVER'],
                 createdAt: 100,
                 updatedAt: 100
             })
             .mockResolvedValueOnce({
                 departmentId: 'HR',
                 name: 'Human Resources',
-                adminSlackUserId: 'U0HRADMIN',
+                adminSlackUserIds: ['U0HRADMIN', 'U0BJR2NMZ6D'],
                 createdAt: 100,
                 updatedAt: 100
             })
@@ -200,13 +206,14 @@ describe('createTask', () => {
 
         const result = await createTask(createTaskPayload, 'create-job-1')
 
+        expect(organizationModule.getTaskDepartment).toHaveBeenCalledWith('leave')
         expect(setHashSpy).toHaveBeenCalledWith(`tasks:${taskId}`, {
             taskId,
             taskType: 'leave',
             status: 'PENDING',
             sourceJobId: 'create-job-1',
             submitterId: 'U0AMWQX3CQG',
-            approverIds: JSON.stringify(['U0BJR2NMZ6D']),
+            approverIds: JSON.stringify(['U0BJR2NMZ6D', 'U0SECONDAPPROVER']),
             observerIds: JSON.stringify(['U0HRADMIN']),
             title: 'Annual leave',
             description: 'Family trip',
@@ -216,6 +223,7 @@ describe('createTask', () => {
         })
         expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(1, 'tasks:index:submitter:U0AMWQX3CQG', 1000, taskId)
         expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(2, 'tasks:index:approver:U0BJR2NMZ6D', 1000, taskId)
+        expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(3, 'tasks:index:approver:U0SECONDAPPROVER', 1000, taskId)
         expect(result).toEqual({
             res: 'success',
             msg: 'TASK_CREATED',
@@ -225,7 +233,7 @@ describe('createTask', () => {
                 taskType: 'leave',
                 status: 'PENDING',
                 submitterId: 'U0AMWQX3CQG',
-                approverIds: ['U0BJR2NMZ6D'],
+                approverIds: ['U0BJR2NMZ6D', 'U0SECONDAPPROVER'],
                 observerIds: ['U0HRADMIN'],
                 title: 'Annual leave',
                 description: 'Family trip',
@@ -237,7 +245,7 @@ describe('createTask', () => {
     })
 
     it('returns the saved task for the same request', async () => {
-        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(existingTaskFields)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(existingTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
         const addSortedSetMemberSpy = vi.spyOn(cacheModule, 'addSortedSetMember').mockResolvedValue(undefined)
 
@@ -268,7 +276,7 @@ describe('createTask', () => {
 
     it('returns an error when the saved task belongs to another request', async () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...existingTaskFields,
+            ...existingTaskHashRecord,
             sourceJobId: 'create-job-2'
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
@@ -281,7 +289,7 @@ describe('createTask', () => {
 
     it('returns an error when the saved task ID does not match the request key', async () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...existingTaskFields,
+            ...existingTaskHashRecord,
             taskId: 'another-task'
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
@@ -308,6 +316,106 @@ describe('createTask', () => {
         expect(getEmployeeSpy).toHaveBeenCalledWith('unknown-user')
     })
 
+    it('returns an error when the submitter is inactive', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
+        vi.spyOn(organizationModule, 'getEmployee').mockResolvedValue({
+            slackUserId: 'U0AMWQX3CQG',
+            name: 'Submitter',
+            departmentId: 'R&D',
+            isActive: false,
+            createdAt: 100,
+            updatedAt: 100
+        })
+        const getDepartmentSpy = vi.spyOn(organizationModule, 'getDepartment')
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await createTask(createTaskPayload, 'create-job-1')
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' })
+        expect(getDepartmentSpy).not.toHaveBeenCalled()
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns an error when the submitter department does not exist', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
+        vi.spyOn(organizationModule, 'getEmployee').mockResolvedValue({
+            slackUserId: 'U0AMWQX3CQG',
+            name: 'Submitter',
+            departmentId: 'R&D',
+            isActive: true,
+            createdAt: 100,
+            updatedAt: 100
+        })
+        vi.spyOn(organizationModule, 'getDepartment').mockRejectedValue('NO_RECORD_FOUND')
+        const getTaskDepartmentSpy = vi.spyOn(organizationModule, 'getTaskDepartment')
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await createTask(createTaskPayload, 'create-job-1')
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' })
+        expect(getTaskDepartmentSpy).not.toHaveBeenCalled()
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns an error when no observer department is assigned to the task type', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
+        vi.spyOn(organizationModule, 'getEmployee').mockResolvedValue({
+            slackUserId: 'U0AMWQX3CQG',
+            name: 'Submitter',
+            departmentId: 'R&D',
+            isActive: true,
+            createdAt: 100,
+            updatedAt: 100
+        })
+        vi.spyOn(organizationModule, 'getDepartment').mockResolvedValue({
+            departmentId: 'R&D',
+            name: 'Research and Development',
+            adminSlackUserIds: ['U0BJR2NMZ6D'],
+            createdAt: 100,
+            updatedAt: 100
+        })
+        vi.spyOn(organizationModule, 'getTaskDepartment').mockRejectedValue('NO_RECORD_FOUND')
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await createTask(createTaskPayload, 'create-job-1')
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns an error when the assigned observer department does not exist', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
+        vi.spyOn(organizationModule, 'getEmployee').mockResolvedValue({
+            slackUserId: 'U0AMWQX3CQG',
+            name: 'Submitter',
+            departmentId: 'R&D',
+            isActive: true,
+            createdAt: 100,
+            updatedAt: 100
+        })
+        vi.spyOn(organizationModule, 'getDepartment')
+            .mockResolvedValueOnce({
+                departmentId: 'R&D',
+                name: 'Research and Development',
+                adminSlackUserIds: ['U0BJR2NMZ6D'],
+                createdAt: 100,
+                updatedAt: 100
+            })
+            .mockRejectedValueOnce('NO_RECORD_FOUND')
+        vi.spyOn(organizationModule, 'getTaskDepartment').mockResolvedValue({
+            taskType: 'leave',
+            departmentId: 'HR',
+            createdAt: 100,
+            updatedAt: 100
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await createTask(createTaskPayload, 'create-job-1')
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_ASSIGNMENT_NOT_FOUND' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
     it('throws when the leave time range is invalid', async () => {
         const invalidPayload: CreateTaskPayload = {
             ...createTaskPayload,
@@ -327,12 +435,13 @@ describe('createTask', () => {
 describe('reviewTask', () => {
     const reviewTaskPayload: ReviewTaskPayload = {
         taskId: 'task-1',
+        reviewType: 'creation',
         approverId: 'U0BJR2NMZ6D',
         decision: 'approve',
         comment: 'Approved'
     }
 
-    const pendingTaskFields: Record<string, string> = {
+    const pendingTaskHashRecord: Record<string, string> = {
         taskId: 'task-1',
         taskType: 'leave',
         status: 'PENDING',
@@ -353,7 +462,7 @@ describe('reviewTask', () => {
 
     it('approves and saves a pending task', async () => {
         vi.spyOn(Date, 'now').mockReturnValue(1000)
-        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskFields)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
         const result = await reviewTask(reviewTaskPayload)
@@ -392,7 +501,7 @@ describe('reviewTask', () => {
 
     it('rejects and saves a pending task', async () => {
         vi.spyOn(Date, 'now').mockReturnValue(1000)
-        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskFields)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
         const rejectPayload: ReviewTaskPayload = {
             ...reviewTaskPayload,
@@ -414,7 +523,7 @@ describe('reviewTask', () => {
     })
 
     it('returns an error when the approver does not match', async () => {
-        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskFields)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
         const result = await reviewTask({
@@ -428,7 +537,7 @@ describe('reviewTask', () => {
 
     it('returns an error when the task was already reviewed', async () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...pendingTaskFields,
+            ...pendingTaskHashRecord,
             status: 'APPROVED'
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
@@ -439,16 +548,16 @@ describe('reviewTask', () => {
         expect(setHashSpy).not.toHaveBeenCalled()
     })
 
-    it('returns an error when the task was deleted', async () => {
+    it('returns an error when the task was cancelled', async () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...pendingTaskFields,
-            status: 'DELETED'
+            ...pendingTaskHashRecord,
+            status: 'CANCELLED'
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
         const result = await reviewTask(reviewTaskPayload)
 
-        expect(result).toEqual({ res: 'error', msg: 'TASK_ALREADY_DELETED' })
+        expect(result).toEqual({ res: 'error', msg: 'TASK_ALREADY_CANCELLED' })
         expect(setHashSpy).not.toHaveBeenCalled()
     })
 
@@ -464,7 +573,7 @@ describe('reviewTask', () => {
 
     it('returns an error when the stored task ID does not match', async () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...pendingTaskFields,
+            ...pendingTaskHashRecord,
             taskId: 'another-task'
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
@@ -474,174 +583,121 @@ describe('reviewTask', () => {
         expect(result).toEqual({ res: 'error', msg: 'TASK_ID_MISMATCH' })
         expect(setHashSpy).not.toHaveBeenCalled()
     })
-})
 
-
-
-
-describe('updateTask', () => {
-    const updateTaskPayload: UpdateTaskPayload = {
+    const revocationReviewPayload: ReviewTaskPayload = {
         taskId: 'task-1',
-        submitterId: 'U0AMWQX3CQG',
-        title: 'Updated annual leave',
-        description: 'Updated family trip',
-        details: {
-            leaveType: 'personal',
-            startAt: 300,
-            endAt: 400
-        }
+        reviewType: 'revocation',
+        revokeRequestId: 'revoke-job-1',
+        approverId: 'U0BJR2NMZ6D',
+        decision: 'approve',
+        comment: 'Revocation approved'
     }
 
-    const approvedTaskFields: Record<string, string> = {
-        taskId: 'task-1',
-        taskType: 'leave',
-        status: 'APPROVED',
-        sourceJobId: 'create-job-1',
-        submitterId: 'U0AMWQX3CQG',
-        approverIds: JSON.stringify(['U0BJR2NMZ6D']),
-        observerIds: JSON.stringify(['U0BJR2NMZ6D']),
-        title: 'Annual leave',
-        description: 'Family trip',
-        details: JSON.stringify({
-            leaveType: 'annual',
-            startAt: 100,
-            endAt: 200
-        }),
-        createdAt: '100',
+    const waitingRevokeTaskHashRecord: Record<string, string> = {
+        ...pendingTaskHashRecord,
+        status: 'WAITING_REVOKE',
+        pendingRevokeRequestId: 'revoke-job-1',
         updatedAt: '200',
         reviewedAt: '200',
-        reviewComment: 'Approved'
+        reviewComment: 'Approved',
+        revokedReason: 'Plans changed'
     }
 
-    it('updates an approved task and resets it to pending', async () => {
+    it('approves the current revocation request', async () => {
         vi.spyOn(Date, 'now').mockReturnValue(1000)
-        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(approvedTaskFields)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(waitingRevokeTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
-        const deleteHashFieldsSpy = vi.spyOn(cacheModule, 'deleteHashFields').mockResolvedValue(undefined)
 
-        const result = await updateTask(updateTaskPayload)
+        const result = await reviewTask(revocationReviewPayload)
 
         expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
-            status: 'PENDING',
-            title: 'Updated annual leave',
-            description: 'Updated family trip',
-            details: JSON.stringify(updateTaskPayload.details),
-            updatedAt: '1000'
+            status: 'REVOKED',
+            pendingRevokeRequestId: '',
+            revokeComment: 'Revocation approved',
+            updatedAt: '1000',
+            revokedAt: '1000'
         })
-        expect(deleteHashFieldsSpy).toHaveBeenCalledWith('tasks:task-1', ['reviewedAt', 'reviewComment'])
-        expect(result).toEqual({
+        expect(result).toEqual(expect.objectContaining({
             res: 'success',
-            msg: 'TASK_UPDATED',
-            responseName: 'taskUpdated',
-            payload: {
-                taskId: 'task-1',
-                taskType: 'leave',
-                status: 'PENDING',
-                submitterId: 'U0AMWQX3CQG',
-                approverIds: ['U0BJR2NMZ6D'],
-                observerIds: ['U0BJR2NMZ6D'],
-                title: 'Updated annual leave',
-                description: 'Updated family trip',
-                details: updateTaskPayload.details,
-                createdAt: 100,
-                updatedAt: 1000
-            }
-        })
+            msg: 'TASK_REVOKED',
+            responseName: 'taskRevoked',
+            payload: expect.objectContaining({
+                status: 'REVOKED',
+                revokedAt: 1000,
+                revokedReason: 'Plans changed',
+                revokeComment: 'Revocation approved'
+            })
+        }))
     })
 
-    it('preserves the description when it is omitted from a rejected task update', async () => {
-        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...approvedTaskFields,
-            status: 'REJECTED'
-        })
+    it('returns the task to approved when revocation is rejected', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1000)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(waitingRevokeTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
-        vi.spyOn(cacheModule, 'deleteHashFields').mockResolvedValue(undefined)
-        const payloadWithoutDescription: UpdateTaskPayload = {
-            taskId: updateTaskPayload.taskId,
-            submitterId: updateTaskPayload.submitterId,
-            title: updateTaskPayload.title,
-            details: updateTaskPayload.details
+        const rejectPayload: ReviewTaskPayload = {
+            ...revocationReviewPayload,
+            decision: 'reject',
+            comment: 'Leave must remain active'
         }
 
-        const result = await updateTask(payloadWithoutDescription)
+        const result = await reviewTask(rejectPayload)
 
-        expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', expect.not.objectContaining({
-            description: expect.anything()
+        expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
+            status: 'APPROVED',
+            pendingRevokeRequestId: '',
+            revokeComment: 'Leave must remain active',
+            updatedAt: '1000'
+        })
+        expect(result).toEqual(expect.objectContaining({
+            res: 'success',
+            msg: 'TASK_REVOCATION_REJECTED',
+            responseName: 'taskRevocationRejected',
+            payload: expect.objectContaining({
+                status: 'APPROVED',
+                revokeComment: 'Leave must remain active'
+            })
         }))
-        expect(result.payload).toEqual(expect.objectContaining({
-            status: 'PENDING',
-            description: 'Family trip'
-        }))
+        expect(result.payload).not.toEqual(expect.objectContaining({ revokedAt: expect.anything() }))
     })
 
-    it('returns an error when the submitter does not match', async () => {
-        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(approvedTaskFields)
+    it('rejects an expired revocation button', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(waitingRevokeTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
-        const deleteHashFieldsSpy = vi.spyOn(cacheModule, 'deleteHashFields').mockResolvedValue(undefined)
 
-        const result = await updateTask({
-            ...updateTaskPayload,
-            submitterId: 'another-submitter'
+        const result = await reviewTask({
+            ...revocationReviewPayload,
+            revokeRequestId: 'old-revoke-job'
         })
 
-        expect(result).toEqual({ res: 'error', msg: 'TASK_UPDATE_FORBIDDEN' })
+        expect(result).toEqual({ res: 'error', msg: 'TASK_REVOCATION_REVIEW_EXPIRED' })
         expect(setHashSpy).not.toHaveBeenCalled()
-        expect(deleteHashFieldsSpy).not.toHaveBeenCalled()
     })
 
-    it('returns an error when the task does not exist', async () => {
-        vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
-        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
-        const deleteHashFieldsSpy = vi.spyOn(cacheModule, 'deleteHashFields').mockResolvedValue(undefined)
-
-        const result = await updateTask(updateTaskPayload)
-
-        expect(result).toEqual({ res: 'error', msg: 'TASK_NOT_FOUND' })
-        expect(setHashSpy).not.toHaveBeenCalled()
-        expect(deleteHashFieldsSpy).not.toHaveBeenCalled()
-    })
-
-    it('returns an error when the stored task ID does not match', async () => {
+    it('rejects a revocation review when no revocation was requested', async () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...approvedTaskFields,
-            taskId: 'another-task'
+            ...waitingRevokeTaskHashRecord,
+            pendingRevokeRequestId: ''
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
-        const deleteHashFieldsSpy = vi.spyOn(cacheModule, 'deleteHashFields').mockResolvedValue(undefined)
 
-        const result = await updateTask(updateTaskPayload)
+        const result = await reviewTask(revocationReviewPayload)
 
-        expect(result).toEqual({ res: 'error', msg: 'TASK_ID_MISMATCH' })
+        expect(result).toEqual({ res: 'error', msg: 'TASK_REVOCATION_NOT_REQUESTED' })
         expect(setHashSpy).not.toHaveBeenCalled()
-        expect(deleteHashFieldsSpy).not.toHaveBeenCalled()
-    })
-
-    it('returns an error when the task was deleted', async () => {
-        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...approvedTaskFields,
-            status: 'DELETED'
-        })
-        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
-        const deleteHashFieldsSpy = vi.spyOn(cacheModule, 'deleteHashFields').mockResolvedValue(undefined)
-
-        const result = await updateTask(updateTaskPayload)
-
-        expect(result).toEqual({ res: 'error', msg: 'TASK_ALREADY_DELETED' })
-        expect(setHashSpy).not.toHaveBeenCalled()
-        expect(deleteHashFieldsSpy).not.toHaveBeenCalled()
     })
 })
 
 
 
 
-describe('deleteTask', () => {
-    const deleteTaskPayload: DeleteTaskPayload = {
+describe('cancelTask', () => {
+    const cancelTaskPayload: CancelTaskPayload = {
         taskId: 'task-1',
-        submitterId: 'U0AMWQX3CQG'
+        submitterId: 'U0AMWQX3CQG',
+        reason: 'Plans changed'
     }
 
-    const pendingTaskFields: Record<string, string> = {
+    const pendingTaskHashRecord: Record<string, string> = {
         taskId: 'task-1',
         taskType: 'leave',
         status: 'PENDING',
@@ -660,25 +716,27 @@ describe('deleteTask', () => {
         updatedAt: '100'
     }
 
-    it('marks a task as deleted', async () => {
+    it('cancels a pending task', async () => {
         vi.spyOn(Date, 'now').mockReturnValue(1000)
-        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskFields)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await deleteTask(deleteTaskPayload)
+        const result = await cancelTask(cancelTaskPayload)
 
         expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
-            status: 'DELETED',
-            updatedAt: '1000'
+            status: 'CANCELLED',
+            updatedAt: '1000',
+            cancelledAt: '1000',
+            cancelledReason: 'Plans changed'
         })
         expect(result).toEqual({
             res: 'success',
-            msg: 'TASK_DELETED',
-            responseName: 'taskDeleted',
+            msg: 'TASK_CANCELLED',
+            responseName: 'taskCancelled',
             payload: {
                 taskId: 'task-1',
                 taskType: 'leave',
-                status: 'DELETED',
+                status: 'CANCELLED',
                 submitterId: 'U0AMWQX3CQG',
                 approverIds: ['U0BJR2NMZ6D'],
                 observerIds: ['U0HRADMIN'],
@@ -690,40 +748,44 @@ describe('deleteTask', () => {
                     endAt: 200
                 },
                 createdAt: 100,
-                updatedAt: 1000
+                updatedAt: 1000,
+                cancelledAt: 1000,
+                cancelledReason: 'Plans changed'
             }
         })
     })
 
-    it('returns the saved task when delete is repeated', async () => {
+    it('returns the saved task when cancel is repeated', async () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...pendingTaskFields,
-            status: 'DELETED',
-            updatedAt: '1000'
+            ...pendingTaskHashRecord,
+            status: 'CANCELLED',
+            updatedAt: '1000',
+            cancelledAt: '1000',
+            cancelledReason: 'Plans changed'
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await deleteTask(deleteTaskPayload)
+        const result = await cancelTask(cancelTaskPayload)
 
         expect(result).toEqual(expect.objectContaining({
             res: 'success',
-            msg: 'TASK_DELETED',
-            responseName: 'taskDeleted',
-            payload: expect.objectContaining({ status: 'DELETED', updatedAt: 1000 })
+            msg: 'TASK_CANCELLED',
+            responseName: 'taskCancelled',
+            payload: expect.objectContaining({ status: 'CANCELLED', updatedAt: 1000, cancelledAt: 1000 })
         }))
         expect(setHashSpy).not.toHaveBeenCalled()
     })
 
     it('returns an error when the submitter does not match', async () => {
-        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskFields)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskHashRecord)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await deleteTask({
-            ...deleteTaskPayload,
+        const result = await cancelTask({
+            ...cancelTaskPayload,
             submitterId: 'another-submitter'
         })
 
-        expect(result).toEqual({ res: 'error', msg: 'TASK_DELETE_FORBIDDEN' })
+        expect(result).toEqual({ res: 'error', msg: 'TASK_CANCEL_FORBIDDEN' })
         expect(setHashSpy).not.toHaveBeenCalled()
     })
 
@@ -731,7 +793,7 @@ describe('deleteTask', () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('NO_RECORD_FOUND')
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await deleteTask(deleteTaskPayload)
+        const result = await cancelTask(cancelTaskPayload)
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_NOT_FOUND' })
         expect(setHashSpy).not.toHaveBeenCalled()
@@ -739,14 +801,170 @@ describe('deleteTask', () => {
 
     it('returns an error when the stored task ID does not match', async () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...pendingTaskFields,
+            ...pendingTaskHashRecord,
             taskId: 'another-task'
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
-        const result = await deleteTask(deleteTaskPayload)
+        const result = await cancelTask(cancelTaskPayload)
 
         expect(result).toEqual({ res: 'error', msg: 'TASK_ID_MISMATCH' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns an error when the task is not pending', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...pendingTaskHashRecord,
+            status: 'APPROVED'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await cancelTask(cancelTaskPayload)
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_CANNOT_BE_CANCELLED' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+})
+
+
+
+
+describe('revokeTask', () => {
+    const revokeTaskPayload: RevokeTaskPayload = {
+        taskId: 'task-1',
+        submitterId: 'U0AMWQX3CQG',
+        reason: 'Plans changed'
+    }
+
+    const approvedTaskHashRecord: Record<string, string> = {
+        taskId: 'task-1',
+        taskType: 'leave',
+        status: 'APPROVED',
+        sourceJobId: 'create-job-1',
+        submitterId: 'U0AMWQX3CQG',
+        approverIds: JSON.stringify(['U0BJR2NMZ6D']),
+        observerIds: JSON.stringify(['U0HRADMIN']),
+        title: 'Annual leave',
+        description: 'Family trip',
+        details: JSON.stringify({
+            leaveType: 'annual',
+            startAt: 100,
+            endAt: 200
+        }),
+        createdAt: '100',
+        updatedAt: '200',
+        reviewedAt: '200',
+        reviewComment: 'Approved'
+    }
+
+    it('moves an approved task to waiting revoke', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1000)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(approvedTaskHashRecord)
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await revokeTask(revokeTaskPayload, 'revoke-job-1')
+
+        expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
+            status: 'WAITING_REVOKE',
+            pendingRevokeRequestId: 'revoke-job-1',
+            revokedReason: 'Plans changed',
+            revokeComment: '',
+            updatedAt: '1000'
+        })
+        expect(result).toEqual(expect.objectContaining({
+            res: 'success',
+            msg: 'TASK_REVOCATION_WAITING',
+            responseName: 'taskRevocationWaiting',
+            payload: expect.objectContaining({
+                status: 'WAITING_REVOKE',
+                revokedReason: 'Plans changed',
+                updatedAt: 1000
+            })
+        }))
+    })
+
+    it('clears values left by a previously rejected revocation', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1000)
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...approvedTaskHashRecord,
+            revokedReason: 'Previous reason',
+            revokeComment: 'Previous rejection comment'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await revokeTask({
+            taskId: 'task-1',
+            submitterId: 'U0AMWQX3CQG'
+        }, 'revoke-job-2')
+
+        expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
+            status: 'WAITING_REVOKE',
+            pendingRevokeRequestId: 'revoke-job-2',
+            revokedReason: '',
+            revokeComment: '',
+            updatedAt: '1000'
+        })
+        expect(result.payload).not.toHaveProperty('revokedReason')
+        expect(result.payload).not.toHaveProperty('revokeComment')
+    })
+
+    it('returns the saved result when the same revoke request is repeated', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...approvedTaskHashRecord,
+            status: 'WAITING_REVOKE',
+            pendingRevokeRequestId: 'revoke-job-1',
+            revokedReason: 'Plans changed'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await revokeTask(revokeTaskPayload, 'revoke-job-1')
+
+        expect(result).toEqual(expect.objectContaining({
+            res: 'success',
+            msg: 'TASK_REVOCATION_WAITING',
+            responseName: 'taskRevocationWaiting'
+        }))
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('rejects a second revoke request while one is pending', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...approvedTaskHashRecord,
+            status: 'WAITING_REVOKE',
+            pendingRevokeRequestId: 'another-revoke-job'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await revokeTask(revokeTaskPayload, 'revoke-job-1')
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_REVOCATION_ALREADY_REQUESTED' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('rejects revoke when the task is not approved', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...approvedTaskHashRecord,
+            status: 'PENDING'
+        })
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await revokeTask(revokeTaskPayload, 'revoke-job-1')
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_CANNOT_BE_REVOKED' })
+        expect(setHashSpy).not.toHaveBeenCalled()
+    })
+
+    it('rejects revoke when the submitter does not match', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(approvedTaskHashRecord)
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        const result = await revokeTask({
+            ...revokeTaskPayload,
+            submitterId: 'another-submitter'
+        }, 'revoke-job-1')
+
+        expect(result).toEqual({ res: 'error', msg: 'TASK_REVOKE_FORBIDDEN' })
         expect(setHashSpy).not.toHaveBeenCalled()
     })
 })
@@ -763,7 +981,7 @@ describe('listTasks', () => {
         endAt: 200
     }
 
-    const pendingTaskFields: Record<string, string> = {
+    const pendingTaskHashRecord: Record<string, string> = {
         taskId: 'task-1',
         taskType: 'leave',
         status: 'PENDING',
@@ -778,8 +996,8 @@ describe('listTasks', () => {
         updatedAt: '100'
     }
 
-    const approvedTaskFields: Record<string, string> = {
-        ...pendingTaskFields,
+    const approvedTaskHashRecord: Record<string, string> = {
+        ...pendingTaskHashRecord,
         taskId: 'task-2',
         status: 'APPROVED',
         title: 'Approved annual leave',
@@ -792,8 +1010,8 @@ describe('listTasks', () => {
     it('lists tasks for a submitter by created time', async () => {
         const getSortedSetMembersSpy = vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-2', 'task-1'])
         vi.spyOn(cacheModule, 'getHashAllFields')
-            .mockResolvedValueOnce(approvedTaskFields)
-            .mockResolvedValueOnce(pendingTaskFields)
+            .mockResolvedValueOnce(approvedTaskHashRecord)
+            .mockResolvedValueOnce(pendingTaskHashRecord)
         const payload: ListTasksPayload = { submitterId, createdAtFrom: 100, createdAtTo: 200 }
 
         const result = await listTasks(payload)
@@ -839,8 +1057,8 @@ describe('listTasks', () => {
     it('filters approver tasks by status and reviewed time', async () => {
         const getSortedSetMembersSpy = vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-2', 'task-1'])
         vi.spyOn(cacheModule, 'getHashAllFields')
-            .mockResolvedValueOnce(approvedTaskFields)
-            .mockResolvedValueOnce(pendingTaskFields)
+            .mockResolvedValueOnce(approvedTaskHashRecord)
+            .mockResolvedValueOnce(pendingTaskHashRecord)
         const payload: ListTasksPayload = {
             approverId,
             status: 'APPROVED',
@@ -856,35 +1074,37 @@ describe('listTasks', () => {
         ])
     })
 
-    it('hides deleted tasks by default', async () => {
+    it('includes cancelled tasks by default', async () => {
         vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-1'])
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...pendingTaskFields,
-            status: 'DELETED'
+            ...pendingTaskHashRecord,
+            status: 'CANCELLED'
         })
 
         const result = await listTasks({ submitterId })
 
-        expect(result.payload).toEqual([])
+        expect(result.payload).toEqual([
+            expect.objectContaining({ taskId: 'task-1', status: 'CANCELLED' })
+        ])
     })
 
-    it('lists deleted tasks when deleted status is provided', async () => {
+    it('lists cancelled tasks when cancelled status is provided', async () => {
         vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-1'])
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...pendingTaskFields,
-            status: 'DELETED'
+            ...pendingTaskHashRecord,
+            status: 'CANCELLED'
         })
 
-        const result = await listTasks({ submitterId, status: 'DELETED' })
+        const result = await listTasks({ submitterId, status: 'CANCELLED' })
 
         expect(result.payload).toEqual([
-            expect.objectContaining({ taskId: 'task-1', status: 'DELETED' })
+            expect.objectContaining({ taskId: 'task-1', status: 'CANCELLED' })
         ])
     })
 
     it('loads one task directly when taskId is provided', async () => {
         const getSortedSetMembersSpy = vi.spyOn(cacheModule, 'getSortedSetMembers')
-        const getHashAllFieldsSpy = vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskFields)
+        const getHashAllFieldsSpy = vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue(pendingTaskHashRecord)
         const payload: ListTasksPayload = { submitterId, taskId: 'task-1' }
 
         const result = await listTasks(payload)
@@ -899,7 +1119,7 @@ describe('listTasks', () => {
     it('returns an empty list when taskId is not visible to the submitter', async () => {
         vi.spyOn(cacheModule, 'getSortedSetMembers')
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...pendingTaskFields,
+            ...pendingTaskHashRecord,
             submitterId: 'another-submitter'
         })
         const payload: ListTasksPayload = { submitterId, taskId: 'task-1' }
@@ -912,9 +1132,9 @@ describe('listTasks', () => {
     it('filters leave tasks by leaveType', async () => {
         vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-1', 'task-2'])
         vi.spyOn(cacheModule, 'getHashAllFields')
-            .mockResolvedValueOnce(pendingTaskFields)
+            .mockResolvedValueOnce(pendingTaskHashRecord)
             .mockResolvedValueOnce({
-                ...pendingTaskFields,
+                ...pendingTaskHashRecord,
                 taskId: 'task-2',
                 details: JSON.stringify({
                     leaveType: 'personal',
@@ -942,7 +1162,7 @@ describe('listTasks', () => {
         vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['missing-task', 'task-1'])
         vi.spyOn(cacheModule, 'getHashAllFields')
             .mockRejectedValueOnce('NO_RECORD_FOUND')
-            .mockResolvedValueOnce({ ...pendingTaskFields, submitterId: 'another-submitter' })
+            .mockResolvedValueOnce({ ...pendingTaskHashRecord, submitterId: 'another-submitter' })
 
         const result = await listTasks({ submitterId })
 
@@ -952,7 +1172,7 @@ describe('listTasks', () => {
     it('skips a task when the stored task ID does not match the index', async () => {
         vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-1'])
         const getHashAllFieldsSpy = vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
-            ...pendingTaskFields,
+            ...pendingTaskHashRecord,
             taskId: 'another-task'
         })
 

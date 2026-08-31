@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'bun:test'
 import * as cacheModule from '@modules/cache'
-import { getDepartment, getEmployee, setDepartment, setEmployee } from '@modules/organization'
-import type { Department, Employee } from '@commontypes/organizationType'
+import { getDepartment, getEmployee, getTaskDepartment, setDepartment, setEmployee, setTaskDepartment } from '@modules/organization'
+import type { Department, Employee, TaskDepartment } from '@commontypes/organizationType'
 
 
 
@@ -61,7 +61,7 @@ describe('department', () => {
     const department: Department = {
         departmentId: 'engineering',
         name: 'Engineering',
-        adminSlackUserId: 'U456',
+        adminSlackUserIds: ['U456', 'U789'],
         createdAt: 100,
         updatedAt: 200
     }
@@ -74,7 +74,7 @@ describe('department', () => {
         expect(setHashSpy).toHaveBeenCalledWith('departments:engineering', {
             departmentId: 'engineering',
             name: 'Engineering',
-            adminSlackUserId: 'U456',
+            adminSlackUserIds: JSON.stringify(['U456', 'U789']),
             createdAt: '100',
             updatedAt: '200'
         })
@@ -84,7 +84,7 @@ describe('department', () => {
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
             departmentId: 'engineering',
             name: 'Engineering',
-            adminSlackUserId: 'U456',
+            adminSlackUserIds: JSON.stringify(['U456', 'U789']),
             createdAt: '100',
             updatedAt: '200'
         })
@@ -92,5 +92,43 @@ describe('department', () => {
         const result = await getDepartment('engineering')
 
         expect(result).toEqual(department)
+    })
+})
+
+
+
+
+describe('taskDepartment', () => {
+    const taskDepartment: TaskDepartment = {
+        taskType: 'leave',
+        departmentId: 'HR',
+        createdAt: 100,
+        updatedAt: 200
+    }
+
+    it('saves a task department assignment', async () => {
+        const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
+
+        await setTaskDepartment(taskDepartment)
+
+        expect(setHashSpy).toHaveBeenCalledWith('taskDepartments:leave', {
+            taskType: 'leave',
+            departmentId: 'HR',
+            createdAt: '100',
+            updatedAt: '200'
+        })
+    })
+
+    it('loads a task department assignment', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            taskType: 'leave',
+            departmentId: 'HR',
+            createdAt: '100',
+            updatedAt: '200'
+        })
+
+        const result = await getTaskDepartment('leave')
+
+        expect(result).toEqual(taskDepartment)
     })
 })
