@@ -68,15 +68,23 @@ type ListTasksFilter = {
 
 type ListTasksBySubmitterPayload = ListTasksFilter & {
     submitterId: string,
-    approverId?: never
+    approverId?: never,
+    observerId?: never
 }
 
 type ListTasksByApproverPayload = ListTasksFilter & {
     submitterId?: never,
-    approverId: string
+    approverId: string,
+    observerId?: never
 }
 
-export type ListTasksPayload = ListTasksBySubmitterPayload | ListTasksByApproverPayload
+type ListTasksByObserverPayload = ListTasksFilter & {
+    submitterId?: never,
+    approverId?: never,
+    observerId: string
+}
+
+export type ListTasksPayload = ListTasksBySubmitterPayload | ListTasksByApproverPayload | ListTasksByObserverPayload
 
 export type TaskAssignment = {
     taskType: TaskType,
@@ -93,6 +101,7 @@ export type TaskRecord = {
     sourceJobId: string,
 
     submitterId: string,
+    submitterName: string,
     approverIds: string[],
     observerIds: string[],
 
@@ -112,7 +121,7 @@ export type TaskRecord = {
     cancelledReason?: string,
 
     revokedAt?: number,
-    revokedReason?: string,
+    revokeReason?: string,
     revokeComment?: string
 }
 
@@ -135,6 +144,7 @@ type TaskHistoryRecordBase = {
 type TaskCreatedHistoryFields = {
     taskType: TaskType,
     submitterId: string,
+    submitterName: string,
     approverIds: string[],
     observerIds: string[],
     title: string,
@@ -158,6 +168,7 @@ export type TaskServiceResultPayload = {
     status: TaskStatus,
 
     submitterId: string,
+    submitterName: string,
     approverIds: string[],
     observerIds: string[],
 
@@ -171,11 +182,13 @@ export type TaskServiceResultPayload = {
     reviewedAt?: number,
     reviewComment?: string,
 
+    pendingRevokeRequestId?: string,
+
     cancelledAt?: number,
     cancelledReason?: string,
 
     revokedAt?: number,
-    revokedReason?: string,
+    revokeReason?: string,
     revokeComment?: string
 }
 

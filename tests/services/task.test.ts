@@ -20,6 +20,7 @@ describe('taskRecord', () => {
             status: 'APPROVED',
             sourceJobId: 'create-job-1',
             submitterId: 'submitter-1',
+            submitterName: 'Submitter',
             approverIds: JSON.stringify(['approver-1']),
             observerIds: JSON.stringify(['observer-1']),
             title: 'Annual leave',
@@ -44,6 +45,7 @@ describe('taskRecord', () => {
             status: 'APPROVED',
             sourceJobId: 'create-job-1',
             submitterId: 'submitter-1',
+            submitterName: 'Submitter',
             approverIds: ['approver-1'],
             observerIds: ['observer-1'],
             title: 'Annual leave',
@@ -63,6 +65,7 @@ describe('taskRecord', () => {
             taskType: 'leave',
             status: 'APPROVED',
             submitterId: 'submitter-1',
+            submitterName: 'Submitter',
             approverIds: ['approver-1'],
             observerIds: ['observer-1'],
             title: 'Annual leave',
@@ -161,6 +164,7 @@ describe('createTask', () => {
         status: 'PENDING',
         sourceJobId: 'create-job-1',
         submitterId: 'U0AMWQX3CQG',
+        submitterName: 'Submitter',
         approverIds: JSON.stringify(['U0BJR2NMZ6D']),
         observerIds: JSON.stringify(['U0BJR2NMZ6D']),
         title: 'Annual leave',
@@ -215,6 +219,7 @@ describe('createTask', () => {
             status: 'PENDING',
             sourceJobId: 'create-job-1',
             submitterId: 'U0AMWQX3CQG',
+            submitterName: 'Submitter',
             approverIds: JSON.stringify(['U0BJR2NMZ6D', 'U0SECONDAPPROVER']),
             observerIds: JSON.stringify(['U0HRADMIN']),
             title: 'Annual leave',
@@ -231,6 +236,7 @@ describe('createTask', () => {
             createdAt: 1000,
             taskType: 'leave',
             submitterId: 'U0AMWQX3CQG',
+            submitterName: 'Submitter',
             approverIds: ['U0BJR2NMZ6D', 'U0SECONDAPPROVER'],
             observerIds: ['U0HRADMIN'],
             title: 'Annual leave',
@@ -240,6 +246,7 @@ describe('createTask', () => {
         expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(1, 'tasks:index:submitter:U0AMWQX3CQG', 1000, taskId)
         expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(2, 'tasks:index:approver:U0BJR2NMZ6D', 1000, taskId)
         expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(3, 'tasks:index:approver:U0SECONDAPPROVER', 1000, taskId)
+        expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(4, 'tasks:index:observer:U0HRADMIN', 1000, taskId)
         expect(result).toEqual({
             res: 'success',
             msg: 'TASK_CREATED',
@@ -249,6 +256,7 @@ describe('createTask', () => {
                 taskType: 'leave',
                 status: 'PENDING',
                 submitterId: 'U0AMWQX3CQG',
+                submitterName: 'Submitter',
                 approverIds: ['U0BJR2NMZ6D', 'U0SECONDAPPROVER'],
                 observerIds: ['U0HRADMIN'],
                 title: 'Annual leave',
@@ -276,6 +284,7 @@ describe('createTask', () => {
                 taskType: 'leave',
                 status: 'PENDING',
                 submitterId: 'U0AMWQX3CQG',
+                submitterName: 'Submitter',
                 approverIds: ['U0BJR2NMZ6D'],
                 observerIds: ['U0BJR2NMZ6D'],
                 title: 'Annual leave',
@@ -288,6 +297,7 @@ describe('createTask', () => {
         expect(setHashSpy).not.toHaveBeenCalled()
         expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(1, 'tasks:index:submitter:U0AMWQX3CQG', 100, createTaskId)
         expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(2, 'tasks:index:approver:U0BJR2NMZ6D', 100, createTaskId)
+        expect(addSortedSetMemberSpy).toHaveBeenNthCalledWith(3, 'tasks:index:observer:U0BJR2NMZ6D', 100, createTaskId)
     })
 
     it('returns an error when the saved task belongs to another request', async () => {
@@ -463,6 +473,7 @@ describe('reviewTask', () => {
         status: 'PENDING',
         sourceJobId: 'create-job-1',
         submitterId: 'U0AMWQX3CQG',
+        submitterName: 'Submitter',
         approverIds: JSON.stringify(['U0BJR2NMZ6D']),
         observerIds: JSON.stringify(['U0BJR2NMZ6D']),
         title: 'Annual leave',
@@ -506,6 +517,7 @@ describe('reviewTask', () => {
                 taskType: 'leave',
                 status: 'APPROVED',
                 submitterId: 'U0AMWQX3CQG',
+                submitterName: 'Submitter',
                 approverIds: ['U0BJR2NMZ6D'],
                 observerIds: ['U0BJR2NMZ6D'],
                 title: 'Annual leave',
@@ -632,7 +644,7 @@ describe('reviewTask', () => {
         updatedAt: '200',
         reviewedAt: '200',
         reviewComment: 'Approved',
-        revokedReason: 'Plans changed'
+        revokeReason: 'Plans changed'
     }
 
     it('approves the current revocation request', async () => {
@@ -664,7 +676,7 @@ describe('reviewTask', () => {
             payload: expect.objectContaining({
                 status: 'REVOKED',
                 revokedAt: 1000,
-                revokedReason: 'Plans changed',
+                revokeReason: 'Plans changed',
                 revokeComment: 'Revocation approved'
             })
         }))
@@ -752,6 +764,7 @@ describe('cancelTask', () => {
         status: 'PENDING',
         sourceJobId: 'create-job-1',
         submitterId: 'U0AMWQX3CQG',
+        submitterName: 'Submitter',
         approverIds: JSON.stringify(['U0BJR2NMZ6D']),
         observerIds: JSON.stringify(['U0HRADMIN']),
         title: 'Annual leave',
@@ -795,6 +808,7 @@ describe('cancelTask', () => {
                 taskType: 'leave',
                 status: 'CANCELLED',
                 submitterId: 'U0AMWQX3CQG',
+                submitterName: 'Submitter',
                 approverIds: ['U0BJR2NMZ6D'],
                 observerIds: ['U0HRADMIN'],
                 title: 'Annual leave',
@@ -900,6 +914,7 @@ describe('revokeTask', () => {
         status: 'APPROVED',
         sourceJobId: 'create-job-1',
         submitterId: 'U0AMWQX3CQG',
+        submitterName: 'Submitter',
         approverIds: JSON.stringify(['U0BJR2NMZ6D']),
         observerIds: JSON.stringify(['U0HRADMIN']),
         title: 'Annual leave',
@@ -925,7 +940,7 @@ describe('revokeTask', () => {
         expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
             status: 'WAITING_REVOKE',
             pendingRevokeRequestId: 'revoke-job-1',
-            revokedReason: 'Plans changed',
+            revokeReason: 'Plans changed',
             revokeComment: '',
             updatedAt: '1000'
         })
@@ -943,7 +958,8 @@ describe('revokeTask', () => {
             responseName: 'taskRevocationWaiting',
             payload: expect.objectContaining({
                 status: 'WAITING_REVOKE',
-                revokedReason: 'Plans changed',
+                pendingRevokeRequestId: 'revoke-job-1',
+                revokeReason: 'Plans changed',
                 updatedAt: 1000
             })
         }))
@@ -953,7 +969,7 @@ describe('revokeTask', () => {
         vi.spyOn(Date, 'now').mockReturnValue(1000)
         vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
             ...approvedTaskHashRecord,
-            revokedReason: 'Previous reason',
+            revokeReason: 'Previous reason',
             revokeComment: 'Previous rejection comment'
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
@@ -966,11 +982,11 @@ describe('revokeTask', () => {
         expect(setHashSpy).toHaveBeenCalledWith('tasks:task-1', {
             status: 'WAITING_REVOKE',
             pendingRevokeRequestId: 'revoke-job-2',
-            revokedReason: '',
+            revokeReason: '',
             revokeComment: '',
             updatedAt: '1000'
         })
-        expect(result.payload).not.toHaveProperty('revokedReason')
+        expect(result.payload).not.toHaveProperty('revokeReason')
         expect(result.payload).not.toHaveProperty('revokeComment')
     })
 
@@ -979,7 +995,7 @@ describe('revokeTask', () => {
             ...approvedTaskHashRecord,
             status: 'WAITING_REVOKE',
             pendingRevokeRequestId: 'revoke-job-1',
-            revokedReason: 'Plans changed'
+            revokeReason: 'Plans changed'
         })
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
 
@@ -988,7 +1004,10 @@ describe('revokeTask', () => {
         expect(result).toEqual(expect.objectContaining({
             res: 'success',
             msg: 'TASK_REVOCATION_WAITING',
-            responseName: 'taskRevocationWaiting'
+            responseName: 'taskRevocationWaiting',
+            payload: expect.objectContaining({
+                pendingRevokeRequestId: 'revoke-job-1'
+            })
         }))
         expect(setHashSpy).not.toHaveBeenCalled()
     })
@@ -1040,6 +1059,7 @@ describe('revokeTask', () => {
 describe('listTasks', () => {
     const submitterId = 'U0AMWQX3CQG'
     const approverId = 'U0BJR2NMZ6D'
+    const observerId = 'U0HRADMIN'
     const taskDetails = {
         leaveType: 'annual' as const,
         startAt: 100,
@@ -1052,8 +1072,9 @@ describe('listTasks', () => {
         status: 'PENDING',
         sourceJobId: 'create-job-1',
         submitterId,
+        submitterName: 'Submitter',
         approverIds: JSON.stringify([approverId]),
-        observerIds: JSON.stringify([approverId]),
+        observerIds: JSON.stringify([observerId]),
         title: 'Annual leave',
         description: 'Family trip',
         details: JSON.stringify(taskDetails),
@@ -1092,8 +1113,9 @@ describe('listTasks', () => {
                     taskType: 'leave',
                     status: 'APPROVED',
                     submitterId,
+                    submitterName: 'Submitter',
                     approverIds: [approverId],
-                    observerIds: [approverId],
+                    observerIds: [observerId],
                     title: 'Approved annual leave',
                     description: 'Family trip',
                     details: taskDetails,
@@ -1107,8 +1129,9 @@ describe('listTasks', () => {
                     taskType: 'leave',
                     status: 'PENDING',
                     submitterId,
+                    submitterName: 'Submitter',
                     approverIds: [approverId],
-                    observerIds: [approverId],
+                    observerIds: [observerId],
                     title: 'Annual leave',
                     description: 'Family trip',
                     details: taskDetails,
@@ -1136,6 +1159,21 @@ describe('listTasks', () => {
         expect(getSortedSetMembersSpy).toHaveBeenCalledWith(`tasks:index:approver:${approverId}`, undefined, undefined)
         expect(result.payload).toEqual([
             expect.objectContaining({ taskId: 'task-2', status: 'APPROVED', reviewedAt: 300 })
+        ])
+    })
+
+    it('lists tasks for an observer by created time', async () => {
+        const getSortedSetMembersSpy = vi.spyOn(cacheModule, 'getSortedSetMembers').mockResolvedValue(['task-2', 'task-1'])
+        vi.spyOn(cacheModule, 'getHashAllFields')
+            .mockResolvedValueOnce(approvedTaskHashRecord)
+            .mockResolvedValueOnce(pendingTaskHashRecord)
+
+        const result = await listTasks({ observerId, createdAtFrom: 100, createdAtTo: 200 })
+
+        expect(getSortedSetMembersSpy).toHaveBeenCalledWith(`tasks:index:observer:${observerId}`, 100, 200)
+        expect(result.payload).toEqual([
+            expect.objectContaining({ taskId: 'task-2', observerIds: [observerId] }),
+            expect.objectContaining({ taskId: 'task-1', observerIds: [observerId] })
         ])
     })
 
@@ -1178,6 +1216,24 @@ describe('listTasks', () => {
         expect(getHashAllFieldsSpy).toHaveBeenCalledWith('tasks:task-1')
         expect(result.payload).toEqual([
             expect.objectContaining({ taskId: 'task-1', submitterId })
+        ])
+    })
+
+    it('returns the pending revoke request ID for a waiting revoke task', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockResolvedValue({
+            ...approvedTaskHashRecord,
+            status: 'WAITING_REVOKE',
+            pendingRevokeRequestId: 'revoke-job-1'
+        })
+
+        const result = await listTasks({ approverId, taskId: 'task-2' })
+
+        expect(result.payload).toEqual([
+            expect.objectContaining({
+                taskId: 'task-2',
+                status: 'WAITING_REVOKE',
+                pendingRevokeRequestId: 'revoke-job-1'
+            })
         ])
     })
 
@@ -1251,6 +1307,14 @@ describe('listTasks', () => {
         const payload = { submitterId, approverId } as unknown as ListTasksPayload
 
         await expect(listTasks(payload)).rejects.toBe('INVALID_LIST_TASKS_USER')
+    })
+
+    it('throws when no list user ID is provided', async () => {
+        await expect(listTasks({ taskType: 'leave' } as ListTasksPayload)).rejects.toBe('INVALID_LIST_TASKS_USER')
+    })
+
+    it('throws when the observer ID is empty', async () => {
+        await expect(listTasks({ observerId: ' ' })).rejects.toBe('INVALID_LIST_TASKS_OBSERVER_ID')
     })
 
     it('throws when leaveType is provided without leave taskType', async () => {

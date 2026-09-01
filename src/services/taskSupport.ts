@@ -43,8 +43,9 @@ export const validateLeaveTaskDetails = (details: TaskDetails): void => {
 export const validateListTasksPayload = (payload: ListTasksPayload): void => {
     const hasSubmitterId = payload.submitterId !== undefined
     const hasApproverId = payload.approverId !== undefined
+    const hasObserverId = payload.observerId !== undefined
 
-    if (hasSubmitterId === hasApproverId) {
+    if ([hasSubmitterId, hasApproverId, hasObserverId].filter(Boolean).length !== 1) {
         throw 'INVALID_LIST_TASKS_USER'
     }
 
@@ -54,6 +55,10 @@ export const validateListTasksPayload = (payload: ListTasksPayload): void => {
 
     if (payload.approverId !== undefined && (typeof payload.approverId !== 'string' || payload.approverId.trim().length === 0)) {
         throw 'INVALID_LIST_TASKS_APPROVER_ID'
+    }
+
+    if (payload.observerId !== undefined && (typeof payload.observerId !== 'string' || payload.observerId.trim().length === 0)) {
+        throw 'INVALID_LIST_TASKS_OBSERVER_ID'
     }
 
     if (payload.taskId !== undefined && (typeof payload.taskId !== 'string' || payload.taskId.trim().length === 0)) {
@@ -146,6 +151,7 @@ export const parseTaskHashRecord = (taskHashRecord: Record<string, string>): Tas
         sourceJobId: taskHashRecord.sourceJobId,
 
         submitterId: taskHashRecord.submitterId,
+        submitterName: taskHashRecord.submitterName,
         approverIds: JSON.parse(taskHashRecord.approverIds) as string[],
         observerIds: JSON.parse(taskHashRecord.observerIds) as string[],
 
@@ -184,8 +190,8 @@ export const parseTaskHashRecord = (taskHashRecord: Record<string, string>): Tas
         taskRecord.revokedAt = Number(taskHashRecord.revokedAt)
     }
 
-    if (taskHashRecord.revokedReason) {
-        taskRecord.revokedReason = taskHashRecord.revokedReason
+    if (taskHashRecord.revokeReason) {
+        taskRecord.revokeReason = taskHashRecord.revokeReason
     }
 
     if (taskHashRecord.revokeComment) {
@@ -204,6 +210,7 @@ export const buildTaskServiceResultPayload = (taskRecord: TaskRecord): TaskServi
         status: taskRecord.status,
 
         submitterId: taskRecord.submitterId,
+        submitterName: taskRecord.submitterName,
         approverIds: taskRecord.approverIds,
         observerIds: taskRecord.observerIds,
 
@@ -226,6 +233,10 @@ export const buildTaskServiceResultPayload = (taskRecord: TaskRecord): TaskServi
         taskServiceResultPayload.reviewComment = taskRecord.reviewComment
     }
 
+    if (taskRecord.pendingRevokeRequestId !== undefined) {
+        taskServiceResultPayload.pendingRevokeRequestId = taskRecord.pendingRevokeRequestId
+    }
+
     if (taskRecord.cancelledAt !== undefined) {
         taskServiceResultPayload.cancelledAt = taskRecord.cancelledAt
     }
@@ -238,8 +249,8 @@ export const buildTaskServiceResultPayload = (taskRecord: TaskRecord): TaskServi
         taskServiceResultPayload.revokedAt = taskRecord.revokedAt
     }
 
-    if (taskRecord.revokedReason !== undefined) {
-        taskServiceResultPayload.revokedReason = taskRecord.revokedReason
+    if (taskRecord.revokeReason !== undefined) {
+        taskServiceResultPayload.revokeReason = taskRecord.revokeReason
     }
 
     if (taskRecord.revokeComment !== undefined) {

@@ -16,6 +16,7 @@ describe('taskHistory', () => {
         createdAt: 100,
         taskType: 'leave',
         submitterId: 'U_SUBMITTER',
+        submitterName: 'Submitter',
         approverIds: ['U_APPROVER'],
         observerIds: ['U_OBSERVER'],
         title: 'Annual leave',

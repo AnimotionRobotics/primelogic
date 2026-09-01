@@ -136,6 +136,11 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
             await addSortedSetMember(taskIndexApproverKey, existingTaskRecord.createdAt, existingTaskRecord.taskId)
         }
 
+        for (const observerId of existingTaskRecord.observerIds) {
+            const taskIndexObserverKey = `tasks:index:observer:${observerId}`
+            await addSortedSetMember(taskIndexObserverKey, existingTaskRecord.createdAt, existingTaskRecord.taskId)
+        }
+
         return { res: 'success', msg: 'TASK_CREATED', responseName: 'taskCreated', payload: existingTaskServiceResultPayload }
     }
 
@@ -204,6 +209,7 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         sourceJobId: requestJobId,
 
         submitterId: payload.submitterId,
+        submitterName: submitter.name,
         approverIds,
         observerIds: [...observerIds],
 
@@ -224,6 +230,7 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         sourceJobId: taskRecord.sourceJobId,
 
         submitterId: taskRecord.submitterId,
+        submitterName: taskRecord.submitterName,
         approverIds: JSON.stringify(taskRecord.approverIds),
         observerIds: JSON.stringify(taskRecord.observerIds),
 
@@ -249,6 +256,7 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
         createdAt: taskRecord.createdAt,
         taskType: taskRecord.taskType,
         submitterId: taskRecord.submitterId,
+        submitterName: taskRecord.submitterName,
         approverIds: taskRecord.approverIds,
         observerIds: taskRecord.observerIds,
         title: taskRecord.title,
@@ -264,6 +272,11 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
     for (const approverId of taskRecord.approverIds) {
         const taskIndexApproverKey = `tasks:index:approver:${approverId}`
         await addSortedSetMember(taskIndexApproverKey, taskRecord.createdAt, taskRecord.taskId)
+    }
+
+    for (const observerId of taskRecord.observerIds) {
+        const taskIndexObserverKey = `tasks:index:observer:${observerId}`
+        await addSortedSetMember(taskIndexObserverKey, taskRecord.createdAt, taskRecord.taskId)
     }
 
     // Build the response
@@ -452,12 +465,12 @@ export const revokeTask = async (payload: RevokeTaskPayload, requestJobId: strin
 
     // Save revoke request
     const updatedAt = Date.now()
-    const revokedReason = payload.reason ?? ''
+    const revokeReason = payload.reason ?? ''
 
     await setHash(taskKey, {
         status: 'WAITING_REVOKE',
         pendingRevokeRequestId: requestJobId,
-        revokedReason,
+        revokeReason,
         revokeComment: '', // Clear old revoke comment
         updatedAt: updatedAt.toString()
     })
@@ -482,9 +495,9 @@ export const revokeTask = async (payload: RevokeTaskPayload, requestJobId: strin
     delete revocationWaitingTaskRecord.revokeComment
 
     if (payload.reason !== undefined) {
-        revocationWaitingTaskRecord.revokedReason = payload.reason
+        revocationWaitingTaskRecord.revokeReason = payload.reason
     } else {
-        delete revocationWaitingTaskRecord.revokedReason
+        delete revocationWaitingTaskRecord.revokeReason
     }
 
     const taskServiceResultPayload = buildTaskServiceResultPayload(revocationWaitingTaskRecord)
@@ -677,14 +690,20 @@ export const reviewTask = async (payload: ReviewTaskPayload, requestJobId: strin
 
 
 
-// List tasks for a submitter or approver
+// List tasks for a submitter, approver, or observer
 export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResult> => {
     validateListTasksPayload(payload)
 
-    const hasSubmitterId = payload.submitterId !== undefined
+    let taskIndexKey: string
+    if (payload.submitterId !== undefined) {
+        taskIndexKey = `tasks:index:submitter:${payload.submitterId}`
+    } else if (payload.approverId !== undefined) {
+        taskIndexKey = `tasks:index:approver:${payload.approverId}`
+    } else {
+        taskIndexKey = `tasks:index:observer:${payload.observerId}`
+    }
 
     // Get taskIds
-    const taskIndexKey = hasSubmitterId ? `tasks:index:submitter:${payload.submitterId}` : `tasks:index:approver:${payload.approverId}`
     const taskIds = payload.taskId !== undefined ? [payload.taskId] : await getSortedSetMembers(taskIndexKey, payload.createdAtFrom, payload.createdAtTo)
 
     const listTasksResponsePayload: ListTasksResponsePayload = []
@@ -712,6 +731,10 @@ export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResul
         const taskRecord = parseTaskHashRecord(taskHashRecord)
 
         if (payload.approverId !== undefined && !taskRecord.approverIds.includes(payload.approverId)) {
+            continue
+        }
+
+        if (payload.observerId !== undefined && !taskRecord.observerIds.includes(payload.observerId)) {
             continue
         }
 

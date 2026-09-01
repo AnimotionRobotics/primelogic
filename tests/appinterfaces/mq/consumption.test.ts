@@ -245,6 +245,7 @@ describe('onDispatchResponse', () => {
             taskType: 'leave' as const,
             status: 'PENDING' as const,
             submitterId: 'U123',
+            submitterName: 'Submitter',
             approverIds: ['U456'],
             observerIds: [],
             title: 'Annual leave',

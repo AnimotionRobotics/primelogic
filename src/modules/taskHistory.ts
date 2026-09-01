@@ -23,6 +23,7 @@ export const appendTaskHistory = async (taskId: string, taskHistoryInput: Append
     if (taskHistoryInput.action === 'CREATED') {
         if (!supportedTaskTypes.includes(taskHistoryInput.taskType)) throw 'INVALID_TASK_HISTORY_TASK_TYPE'
         if (!taskHistoryInput.submitterId || typeof taskHistoryInput.submitterId !== 'string') throw 'INVALID_TASK_HISTORY_SUBMITTER_ID'
+        if (!taskHistoryInput.submitterName || typeof taskHistoryInput.submitterName !== 'string') throw 'INVALID_TASK_HISTORY_SUBMITTER_NAME'
         if (!Array.isArray(taskHistoryInput.approverIds) || !Array.isArray(taskHistoryInput.observerIds)) throw 'INVALID_TASK_HISTORY_ASSIGNMENT'
         if (!taskHistoryInput.title || typeof taskHistoryInput.title !== 'string') throw 'INVALID_TASK_HISTORY_TITLE'
         if (taskHistoryInput.description !== undefined && typeof taskHistoryInput.description !== 'string') throw 'INVALID_TASK_HISTORY_DESCRIPTION'
@@ -95,6 +96,7 @@ export const getTaskHistory = async (taskId: string): Promise<TaskHistoryRecord[
         if (taskHistoryValues.action === 'CREATED') {
             if (typeof taskHistoryValues.taskType !== 'string' || !supportedTaskTypes.includes(taskHistoryValues.taskType as TaskType)) throw 'INVALID_TASK_HISTORY_RECORD'
             if (typeof taskHistoryValues.submitterId !== 'string') throw 'INVALID_TASK_HISTORY_RECORD'
+            if (typeof taskHistoryValues.submitterName !== 'string') throw 'INVALID_TASK_HISTORY_RECORD'
             if (!Array.isArray(taskHistoryValues.approverIds) || !Array.isArray(taskHistoryValues.observerIds)) throw 'INVALID_TASK_HISTORY_RECORD'
             if (typeof taskHistoryValues.title !== 'string') throw 'INVALID_TASK_HISTORY_RECORD'
             if (taskHistoryValues.description !== undefined && typeof taskHistoryValues.description !== 'string') throw 'INVALID_TASK_HISTORY_RECORD'
