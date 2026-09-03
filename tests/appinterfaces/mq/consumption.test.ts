@@ -12,16 +12,6 @@ beforeEach(() => {
     vi.restoreAllMocks()
 })
 
-describe('onCallServiceError', () => {
-    it('allows retry for a temporary service error', () => {
-        expect(abnormalModule.onCallServiceError('SET_HASH_FAILED')).toBe(true)
-    })
-
-    it('does not allow retry for a business error', () => {
-        expect(abnormalModule.onCallServiceError('INVALID_LEAVE_TIME_RANGE')).toBe(false)
-    })
-})
-
 describe('onDispatchResponseError', () => {
     it('allows retry when the response Hash cannot be saved', () => {
         expect(abnormalModule.onDispatchResponseError(undefined, 'SET_HASH_FAILED')).toBe(true)
@@ -147,11 +137,15 @@ describe('onCallService', () => {
         }
     }
 
-    it('nacks the source message when the service error can be retried', async () => {
+    it('nacks the source message when the service requests a retry', async () => {
         const retrySteps: string[] = []
         vi.spyOn(Date, 'now').mockReturnValue(1000)
         vi.spyOn(loggerModule, 'logEvent').mockImplementation(() => undefined)
-        vi.spyOn(serviceModule, 'serviceRoute').mockRejectedValue('SET_HASH_FAILED')
+        vi.spyOn(serviceModule, 'serviceRoute').mockResolvedValue({
+            err: true,
+            ack: false,
+            msg: 'SET_HASH_FAILED'
+        })
         const incrementHashFieldSpy = vi.spyOn(cacheModule, 'incrementHashField').mockImplementation(async () => {
             retrySteps.push('incrementRetry')
             return 1
@@ -173,9 +167,9 @@ describe('onCallService', () => {
         expect(result).toEqual({ nextStep: 'continue' })
     })
 
-    it('returns a failure response when the service error cannot be retried', async () => {
+    it('returns a failure response when the service throws an unexpected error', async () => {
         vi.spyOn(loggerModule, 'logEvent').mockImplementation(() => undefined)
-        vi.spyOn(serviceModule, 'serviceRoute').mockRejectedValue('INVALID_LEAVE_TIME_RANGE')
+        vi.spyOn(serviceModule, 'serviceRoute').mockRejectedValue(new Error('UNEXPECTED_SERVICE_FAILURE'))
         const incrementHashFieldSpy = vi.spyOn(cacheModule, 'incrementHashField').mockResolvedValue(1)
         const setHashSpy = vi.spyOn(cacheModule, 'setHash').mockResolvedValue(undefined)
         const nAckMessageSpy = vi.spyOn(mqModule, 'nAckMessage').mockResolvedValue(true)

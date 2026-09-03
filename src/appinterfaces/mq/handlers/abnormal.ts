@@ -144,19 +144,3 @@ export const onDispatchResponseError = (errorCode: string | undefined, errorMess
 
     return canRetry
 }
-
-
-
-
-const retryableServiceErrorCodes: string[] = [
-    'ERROR_GET_ALL_HASH_FIELDS',
-    'SET_HASH_FAILED',
-    'DELETE_HASH_FIELDS_FAILED',
-    'ADD_SORTED_SET_MEMBER_FAILED',
-    'GET_SORTED_SET_MEMBERS_FAILED'
-]
-// Check whether a service error can be retried
-export const onCallServiceError = (error: unknown): boolean => {
-    const canRetry = typeof error === 'string' && retryableServiceErrorCodes.includes(error)
-    return canRetry
-}

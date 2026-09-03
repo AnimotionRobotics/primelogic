@@ -2,16 +2,20 @@ import { addSortedSetMember, getHashAllFields, getSortedSetMembers, setHash } fr
 import { getDepartment, getEmployee, getTaskDepartment } from '@modules/organization'
 import { appendTaskHistory } from '@modules/taskHistory'
 import type { ResponseName } from '@commontypes/messageType'
-import type { CancelTaskPayload, CreateTaskPayload, ReviewTaskPayload, RevokeTaskPayload, TaskRecord, TaskStatus, ListTasksPayload, ListTasksResponsePayload} from '@commontypes/taskType'
+import type { AddFileToTaskPayload, CancelTaskPayload, CreateTaskPayload, ReviewTaskPayload, RevokeTaskPayload, TaskRecord, TaskStatus, ListTasksPayload, ListTasksResponsePayload} from '@commontypes/taskType'
 import { buildTaskServiceResultPayload, matchesListTaskFilters, parseTaskHashRecord, validateLeaveTaskDetails, validateListTasksPayload } from './taskSupport'
 import type { HandlerResult, TaskDetailsValidator } from './taskSupport'
 
 // Add one file to selected tasks
-export const addFileToTask = async (config): Promise<HandlerResult> => {
+export const addFileToTask = async (config: AddFileToTaskPayload): Promise<HandlerResult> => {
 
     const configObj = config
     // check if the selected items exist in database
-    const metadata = JSON.parse(configObj.metadata)
+    try {
+        JSON.parse(configObj.metadata)
+    } catch {
+        return { res: 'error', msg: 'INVALID_FILE_METADATA' }
+    }
     const userId = configObj.userId
     const selectedValues = configObj.selectedValues
     const fileId = configObj.fileId
@@ -68,23 +72,23 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
 
     // Check task fields
     if (!('taskType' in payload)) {
-        throw 'INVALID_CREATE_TASK_PAYLOAD'
+        return { res: 'error', msg: 'INVALID_CREATE_TASK_PAYLOAD' }
     }
 
     if (typeof payload.submitterId !== 'string' || payload.submitterId.trim().length === 0) {
-        throw 'INVALID_TASK_SUBMITTER_ID'
+        return { res: 'error', msg: 'INVALID_TASK_SUBMITTER_ID' }
     }
 
     if (typeof payload.title !== 'string' || payload.title.trim().length === 0) {
-        throw 'INVALID_TASK_TITLE'
+        return { res: 'error', msg: 'INVALID_TASK_TITLE' }
     }
 
     if (payload.description !== undefined && typeof payload.description !== 'string') {
-        throw 'INVALID_TASK_DESCRIPTION'
+        return { res: 'error', msg: 'INVALID_TASK_DESCRIPTION' }
     }
 
     if (!payload.details || typeof payload.details !== 'object') {
-        throw 'INVALID_TASK_DETAILS'
+        return { res: 'error', msg: 'INVALID_TASK_DETAILS' }
     }
 
     // Check task details
@@ -93,10 +97,13 @@ export const createTask = async (payload: CreateTaskPayload, requestJobId: strin
     taskDetailsValidator = payload.taskType === 'leave' ? validateLeaveTaskDetails : taskDetailsValidator
 
     if (!taskDetailsValidator) {
-        throw 'UNSUPPORTED_TASK_TYPE'
+        return { res: 'error', msg: 'UNSUPPORTED_TASK_TYPE' }
     }
 
-    taskDetailsValidator(payload.details)
+    const taskDetailsValidationError = taskDetailsValidator(payload.details)
+    if (taskDetailsValidationError) {
+        return { res: 'error', msg: taskDetailsValidationError }
+    }
 
     // Build task ID from requestJobId
     const taskId = Bun.hash(`task:${requestJobId}`).toString()
@@ -295,23 +302,23 @@ export const cancelTask = async (payload: CancelTaskPayload, requestJobId: strin
     const hasRequiredCancelProperties = 'taskId' in payload && 'submitterId' in payload
 
     if (!hasRequiredCancelProperties) {
-        throw 'INVALID_CANCEL_TASK_PAYLOAD'
+        return { res: 'error', msg: 'INVALID_CANCEL_TASK_PAYLOAD' }
     }
 
     if (typeof payload.taskId !== 'string' || payload.taskId.trim().length === 0) {
-        throw 'INVALID_TASK_ID'
+        return { res: 'error', msg: 'INVALID_TASK_ID' }
     }
 
     if (typeof payload.submitterId !== 'string' || payload.submitterId.trim().length === 0) {
-        throw 'INVALID_TASK_SUBMITTER_ID'
+        return { res: 'error', msg: 'INVALID_TASK_SUBMITTER_ID' }
     }
 
     if (payload.reason !== undefined && typeof payload.reason !== 'string') {
-        throw 'INVALID_TASK_CANCEL_REASON'
+        return { res: 'error', msg: 'INVALID_TASK_CANCEL_REASON' }
     }
 
     if (typeof requestJobId !== 'string' || requestJobId.trim().length === 0) {
-        throw 'INVALID_REQUEST_JOB_ID'
+        return { res: 'error', msg: 'INVALID_REQUEST_JOB_ID' }
     }
 
     // Load the task
@@ -398,23 +405,23 @@ export const revokeTask = async (payload: RevokeTaskPayload, requestJobId: strin
     const hasRequiredRevokeProperties = 'taskId' in payload && 'submitterId' in payload
 
     if (!hasRequiredRevokeProperties) {
-        throw 'INVALID_REVOKE_TASK_PAYLOAD'
+        return { res: 'error', msg: 'INVALID_REVOKE_TASK_PAYLOAD' }
     }
 
     if (typeof payload.taskId !== 'string' || payload.taskId.trim().length === 0) {
-        throw 'INVALID_TASK_ID'
+        return { res: 'error', msg: 'INVALID_TASK_ID' }
     }
 
     if (typeof payload.submitterId !== 'string' || payload.submitterId.trim().length === 0) {
-        throw 'INVALID_TASK_SUBMITTER_ID'
+        return { res: 'error', msg: 'INVALID_TASK_SUBMITTER_ID' }
     }
 
     if (payload.reason !== undefined && typeof payload.reason !== 'string') {
-        throw 'INVALID_TASK_REVOKE_REASON'
+        return { res: 'error', msg: 'INVALID_TASK_REVOKE_REASON' }
     }
 
     if (typeof requestJobId !== 'string' || requestJobId.trim().length === 0) {
-        throw 'INVALID_REQUEST_JOB_ID'
+        return { res: 'error', msg: 'INVALID_REQUEST_JOB_ID' }
     }
 
     // Load task
@@ -514,35 +521,35 @@ export const reviewTask = async (payload: ReviewTaskPayload, requestJobId: strin
     const hasRequiredReviewProperties = 'taskId' in payload && 'reviewType' in payload && 'approverId' in payload && 'decision' in payload
 
     if (!hasRequiredReviewProperties) {
-        throw 'INVALID_REVIEW_TASK_PAYLOAD'
+        return { res: 'error', msg: 'INVALID_REVIEW_TASK_PAYLOAD' }
     }
 
     if (typeof payload.taskId !== 'string' || payload.taskId.trim().length === 0) {
-        throw 'INVALID_TASK_ID'
+        return { res: 'error', msg: 'INVALID_TASK_ID' }
     }
 
     if (payload.reviewType !== 'creation' && payload.reviewType !== 'revocation') {
-        throw 'INVALID_REVIEW_TYPE'
+        return { res: 'error', msg: 'INVALID_REVIEW_TYPE' }
     }
 
     if (typeof payload.approverId !== 'string' || payload.approverId.trim().length === 0) {
-        throw 'INVALID_APPROVER_ID'
+        return { res: 'error', msg: 'INVALID_APPROVER_ID' }
     }
 
     if (payload.decision !== 'approve' && payload.decision !== 'reject') {
-        throw 'INVALID_REVIEW_DECISION'
+        return { res: 'error', msg: 'INVALID_REVIEW_DECISION' }
     }
 
     if (payload.comment !== undefined && typeof payload.comment !== 'string') {
-        throw 'INVALID_REVIEW_COMMENT'
+        return { res: 'error', msg: 'INVALID_REVIEW_COMMENT' }
     }
 
     if (payload.reviewType === 'revocation' && (typeof payload.revokeRequestId !== 'string' || payload.revokeRequestId.trim().length === 0)) {
-        throw 'INVALID_REVOKE_REQUEST_ID'
+        return { res: 'error', msg: 'INVALID_REVOKE_REQUEST_ID' }
     }
 
     if (typeof requestJobId !== 'string' || requestJobId.trim().length === 0) {
-        throw 'INVALID_REQUEST_JOB_ID'
+        return { res: 'error', msg: 'INVALID_REQUEST_JOB_ID' }
     }
 
     // Load task and check approver
@@ -692,7 +699,10 @@ export const reviewTask = async (payload: ReviewTaskPayload, requestJobId: strin
 
 // List tasks for a submitter, approver, or observer
 export const listTasks = async (payload: ListTasksPayload): Promise<HandlerResult> => {
-    validateListTasksPayload(payload)
+    const listTasksPayloadValidationError = validateListTasksPayload(payload)
+    if (listTasksPayloadValidationError) {
+        return { res: 'error', msg: listTasksPayloadValidationError }
+    }
 
     let taskIndexKey: string
     if (payload.submitterId !== undefined) {

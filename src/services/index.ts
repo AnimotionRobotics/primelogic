@@ -1,64 +1,56 @@
 /**
  * All Business Logics should be accomplished by calling modules or 3rd party APIs in here
  */
-import { addFileToTask, cancelTask, createTask, reviewTask, listTasks, revokeTask } from './task'
-import type { HandlerResult } from './taskSupport'
+import { addFileToTask, cancelTask, createTask, listTasks, onServiceFunctionFailure, reviewTask, revokeTask } from './handlers'
+import type { HandlerResult } from './handlers'
 import type { JobName, JobPayload, ResponseName } from '@commontypes/messageType'
-import type { CancelTaskPayload, CreateTaskPayload, ReviewTaskPayload, RevokeTaskPayload, TaskResponsePayload, ListTasksPayload } from '@commontypes/taskType'
-
-
-/**
- * Service Abnormal Situation Handler
- * e.g: normal handler function threw error
- */
-export const onServiceFunctionFailure = (data: object) => {
-
-    // TODO - implement the final logic of errors thrown by all service handler functions
-    //
-    console.log('\n\n', __filename, '\nonServiceFunctionFailure(), data: ', data)
-}
+import type { AddFileToTaskPayload, CancelTaskPayload, CreateTaskPayload, ReviewTaskPayload, RevokeTaskPayload, TaskResponsePayload, ListTasksPayload } from '@commontypes/taskType'
 
 
 
 
 /**
  * Service Functions Router
- * @returns boolean telling message queue handler if the message is properly handled, letting it know should perform ack or nack
+ * @returns service result telling the message queue handler whether the source message can be acknowledged
  */
 export type ServiceCallResult = { err: boolean, ack: boolean, msg?: string, responseName?: ResponseName, payload?: TaskResponsePayload }
 export const serviceRoute = async (funcName: JobName, payload: JobPayload, requestJobId: string): Promise<ServiceCallResult> => {
 
     if (!funcName) {
-        throw 'MISSING_PARAMETER_FUNCNAME'
+        return { err: true, ack: true, msg: 'MISSING_PARAMETER_FUNCNAME', responseName: 'taskOperationFailed' }
     }
 
     if (!payload) {
-        throw 'MISSING_PARAMETER_PAYLOAD'
+        return { err: true, ack: true, msg: 'MISSING_PARAMETER_PAYLOAD', responseName: 'taskOperationFailed' }
     }
 
     if (!requestJobId) {
-        throw 'MISSING_PARAMETER_REQUEST_JOB_ID'
+        return { err: true, ack: true, msg: 'MISSING_PARAMETER_REQUEST_JOB_ID', responseName: 'taskOperationFailed' }
     }
 
     if (typeof payload !== 'object') {
-        throw 'INVALID_PARAMETER_PAYLOAD'
+        return { err: true, ack: true, msg: 'INVALID_PARAMETER_PAYLOAD', responseName: 'taskOperationFailed' }
     }
 
     let handlerResult: HandlerResult | null = null
 
-    // Call service according to funcName
-    handlerResult = funcName === 'addFileToTask' ? await addFileToTask(payload) : handlerResult
-    handlerResult = funcName === 'createTask' ? await createTask(payload as CreateTaskPayload, requestJobId) : handlerResult
-    handlerResult = funcName === 'reviewTask' ? await reviewTask(payload as ReviewTaskPayload, requestJobId) : handlerResult
-    handlerResult = funcName === 'listTasks' ? await listTasks(payload as ListTasksPayload) : handlerResult
-    handlerResult = funcName === 'cancelTask' ? await cancelTask(payload as CancelTaskPayload, requestJobId) : handlerResult
-    handlerResult = funcName === 'revokeTask' ? await revokeTask(payload as RevokeTaskPayload, requestJobId) : handlerResult
-
-    if (!handlerResult) {
-        throw 'SERVICE_FUNCTION_NOT_FOUND'
+    try {
+        // Call service according to funcName
+        handlerResult = funcName === 'addFileToTask' ? await addFileToTask(payload as AddFileToTaskPayload) : handlerResult
+        handlerResult = funcName === 'createTask' ? await createTask(payload as CreateTaskPayload, requestJobId) : handlerResult
+        handlerResult = funcName === 'reviewTask' ? await reviewTask(payload as ReviewTaskPayload, requestJobId) : handlerResult
+        handlerResult = funcName === 'listTasks' ? await listTasks(payload as ListTasksPayload) : handlerResult
+        handlerResult = funcName === 'cancelTask' ? await cancelTask(payload as CancelTaskPayload, requestJobId) : handlerResult
+        handlerResult = funcName === 'revokeTask' ? await revokeTask(payload as RevokeTaskPayload, requestJobId) : handlerResult
+    } catch (error) {
+        handlerResult = onServiceFunctionFailure(error)
     }
 
-    // retry + xnack ?
+    if (!handlerResult) {
+        return { err: true, ack: true, msg: 'SERVICE_FUNCTION_NOT_FOUND', responseName: 'taskOperationFailed' }
+    }
+
+    // Return retryable failures without acknowledging the source message
     if (handlerResult.res === 'fail') {
         return { err: true, ack: false, msg: handlerResult.msg }
     }

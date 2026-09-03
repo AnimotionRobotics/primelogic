@@ -3,8 +3,8 @@ import { incrementHashField, setHash } from '@modules/cache'
 import { dispatchMessage, getMessage, nAckMessage } from '@modules/mq'
 import { logEvent } from '@modules/logger'
 import { serviceRoute, type ServiceCallResult } from '@services'
-import { onDispatchResponseError, onDlqError, onGetMessageError, onCallServiceError } from './abnormal'
-import { loadJobMessage } from './jobMessage'
+import { onDispatchResponseError, onDlqError, onGetMessageError } from './abnormal'
+import { loadJobMessage } from './consumptionSupport'
 
 export type MessageQueueConsumerConfig = {
     streamKey: string
@@ -95,25 +95,22 @@ export const onCallService = async (message: ConsumedJobMessage, config: Message
         return { nextStep: 'continue' }
     }
 
-    // Call service and handle errors
+    // Call service and handle unexpected errors
     const serviceStartedAt = Date.now()
     let serviceResult: ServiceCallResult
     try {
         serviceResult = await serviceRoute(message.name, message.payload, message.jobId)
     } catch (serviceError) {
-        const canRetry = onCallServiceError(serviceError)
         const serviceErrorCode = typeof serviceError === 'string' ? serviceError : 'SERVICE_FUNCTION_FAILED'
-        logEvent(canRetry ? 'warn' : 'error', 'service.call.failed', {
+        logEvent('error', 'service.call.failed', {
             sourceStreamMessageId: message.streamMessageId,
             requestJobId: message.jobId,
             jobName: message.name,
             errorCode: serviceErrorCode,
             errorMessage: serviceError instanceof Error ? serviceError.message: undefined,
-            shouldRetryService: canRetry
+            shouldRetryService: false
         })
-        serviceResult = canRetry
-            ? { err: true, ack: false, msg: serviceErrorCode }
-            : { err: true, ack: true, msg: 'SERVICE_FUNCTION_FAILED', responseName: 'taskOperationFailed' }
+        serviceResult = { err: true, ack: true, msg: 'SERVICE_FUNCTION_FAILED', responseName: 'taskOperationFailed' }
     }
 
     logEvent('info', 'service.call.completed', {

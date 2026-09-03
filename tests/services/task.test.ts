@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'bun:test'
 import * as cacheModule from '@modules/cache'
 import * as organizationModule from '@modules/organization'
 import * as taskHistoryModule from '@modules/taskHistory'
-import { addFileToTask, cancelTask, createTask, listTasks, reviewTask, revokeTask } from '@services/task'
-import { buildTaskServiceResultPayload, parseTaskHashRecord } from '@services/taskSupport'
+import { serviceRoute } from '@services'
+import { addFileToTask, cancelTask, createTask, listTasks, reviewTask, revokeTask } from '@services/handlers/task'
+import { buildTaskServiceResultPayload, parseTaskHashRecord } from '@services/handlers/taskSupport'
 import type { AddFileToTaskPayload, CancelTaskPayload, CreateTaskPayload, ListTasksPayload, ReviewTaskPayload, RevokeTaskPayload, TaskRecord } from '@commontypes/taskType'
 
 beforeEach(() => {
@@ -130,13 +131,15 @@ describe('addFileToTask', () => {
         expect(result).toEqual({ res: 'error', msg: 'NOT_FOUND:task-2' })
     })
 
-    it('throws when metadata is invalid JSON', async () => {
+    it('returns an error when metadata is invalid JSON', async () => {
         const invalidPayload: AddFileToTaskPayload = {
             ...addFilePayload,
             metadata: 'invalid JSON'
         }
 
-        await expect(addFileToTask(invalidPayload)).rejects.toThrow()
+        const result = await addFileToTask(invalidPayload)
+
+        expect(result).toEqual({ res: 'error', msg: 'INVALID_FILE_METADATA' })
     })
 })
 
@@ -442,7 +445,7 @@ describe('createTask', () => {
         expect(setHashSpy).not.toHaveBeenCalled()
     })
 
-    it('throws when the leave time range is invalid', async () => {
+    it('returns an error when the leave time range is invalid', async () => {
         const invalidPayload: CreateTaskPayload = {
             ...createTaskPayload,
             details: {
@@ -451,7 +454,9 @@ describe('createTask', () => {
             }
         }
 
-        await expect(createTask(invalidPayload, 'create-job-1')).rejects.toBe('INVALID_LEAVE_TIME_RANGE')
+        const result = await createTask(invalidPayload, 'create-job-1')
+
+        expect(result).toEqual({ res: 'error', msg: 'INVALID_LEAVE_TIME_RANGE' })
     })
 })
 
@@ -1303,41 +1308,105 @@ describe('listTasks', () => {
         expect(result.payload).toEqual([])
     })
 
-    it('throws when both user IDs are provided', async () => {
+    it('returns an error when both user IDs are provided', async () => {
         const payload = { submitterId, approverId } as unknown as ListTasksPayload
 
-        await expect(listTasks(payload)).rejects.toBe('INVALID_LIST_TASKS_USER')
+        const result = await listTasks(payload)
+
+        expect(result).toEqual({ res: 'error', msg: 'INVALID_LIST_TASKS_USER' })
     })
 
-    it('throws when no list user ID is provided', async () => {
-        await expect(listTasks({ taskType: 'leave' } as ListTasksPayload)).rejects.toBe('INVALID_LIST_TASKS_USER')
+    it('returns an error when no list user ID is provided', async () => {
+        const result = await listTasks({ taskType: 'leave' } as ListTasksPayload)
+
+        expect(result).toEqual({ res: 'error', msg: 'INVALID_LIST_TASKS_USER' })
     })
 
-    it('throws when the observer ID is empty', async () => {
-        await expect(listTasks({ observerId: ' ' })).rejects.toBe('INVALID_LIST_TASKS_OBSERVER_ID')
+    it('returns an error when the observer ID is empty', async () => {
+        const result = await listTasks({ observerId: ' ' })
+
+        expect(result).toEqual({ res: 'error', msg: 'INVALID_LIST_TASKS_OBSERVER_ID' })
     })
 
-    it('throws when leaveType is provided without leave taskType', async () => {
+    it('returns an error when leaveType is provided without leave taskType', async () => {
         const getSortedSetMembersSpy = vi.spyOn(cacheModule, 'getSortedSetMembers')
         const payload = { submitterId, leaveType: 'annual' } as unknown as ListTasksPayload
 
-        await expect(listTasks(payload)).rejects.toBe('INVALID_LIST_TASKS_LEAVE_TYPE_FILTER')
+        const result = await listTasks(payload)
+
+        expect(result).toEqual({ res: 'error', msg: 'INVALID_LIST_TASKS_LEAVE_TYPE_FILTER' })
         expect(getSortedSetMembersSpy).not.toHaveBeenCalled()
     })
 
-    it('throws when the created time range is invalid', async () => {
+    it('returns an error when the created time range is invalid', async () => {
         const getSortedSetMembersSpy = vi.spyOn(cacheModule, 'getSortedSetMembers')
         const payload: ListTasksPayload = { submitterId, createdAtFrom: 400, createdAtTo: 300 }
 
-        await expect(listTasks(payload)).rejects.toBe('INVALID_LIST_TASKS_CREATED_AT_RANGE')
+        const result = await listTasks(payload)
+
+        expect(result).toEqual({ res: 'error', msg: 'INVALID_LIST_TASKS_CREATED_AT_RANGE' })
         expect(getSortedSetMembersSpy).not.toHaveBeenCalled()
     })
 
-    it('throws when the reviewed time range is invalid', async () => {
+    it('returns an error when the reviewed time range is invalid', async () => {
         const getSortedSetMembersSpy = vi.spyOn(cacheModule, 'getSortedSetMembers')
         const payload: ListTasksPayload = { approverId, reviewedAtFrom: 400, reviewedAtTo: 300 }
 
-        await expect(listTasks(payload)).rejects.toBe('INVALID_LIST_TASKS_REVIEWED_AT_RANGE')
+        const result = await listTasks(payload)
+
+        expect(result).toEqual({ res: 'error', msg: 'INVALID_LIST_TASKS_REVIEWED_AT_RANGE' })
         expect(getSortedSetMembersSpy).not.toHaveBeenCalled()
+    })
+})
+
+
+
+
+describe('serviceRoute', () => {
+    const addFilePayload: AddFileToTaskPayload = {
+        metadata: '{}',
+        userId: 'user-1',
+        selectedValues: ['task-1'],
+        fileId: 'file-1'
+    }
+
+    it('returns a business error from a service function', async () => {
+        const invalidPayload = {
+            taskType: 'leave',
+            submitterId: 'submitter-1',
+            title: 'Annual leave',
+            details: {
+                leaveType: 'annual',
+                startAt: 200,
+                endAt: 100
+            }
+        } as CreateTaskPayload
+
+        const result = await serviceRoute('createTask', invalidPayload, 'create-job-1')
+
+        expect(result).toEqual({
+            err: true,
+            ack: true,
+            msg: 'INVALID_LEAVE_TIME_RANGE',
+            responseName: 'taskOperationFailed'
+        })
+    })
+
+    it('returns a retryable failure when a service dependency fails temporarily', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue('ERROR_GET_ALL_HASH_FIELDS')
+
+        const result = await serviceRoute('addFileToTask', addFilePayload, 'add-file-job-1')
+
+        expect(result).toEqual({
+            err: true,
+            ack: false,
+            msg: 'ERROR_GET_ALL_HASH_FIELDS'
+        })
+    })
+
+    it('throws an unexpected service failure to the upper layer', async () => {
+        vi.spyOn(cacheModule, 'getHashAllFields').mockRejectedValue(new Error('UNEXPECTED_SERVICE_FAILURE'))
+
+        await expect(serviceRoute('addFileToTask', addFilePayload, 'add-file-job-1')).rejects.toThrow('UNEXPECTED_SERVICE_FAILURE')
     })
 })

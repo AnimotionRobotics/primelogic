@@ -16,94 +16,98 @@ export type HandlerResult = {
 }
 
 
-export type TaskDetailsValidator = (details: TaskDetails) => void
+export type TaskDetailsValidator = (details: TaskDetails) => string | null
 
 
 // Check leave task details
-export const validateLeaveTaskDetails = (details: TaskDetails): void => {
+export const validateLeaveTaskDetails = (details: TaskDetails): string | null => {
 
     if (!('leaveType' in details) || !supportedLeaveTypes.includes(details.leaveType)) {
-        throw 'INVALID_LEAVE_TYPE'
+        return 'INVALID_LEAVE_TYPE'
     }
 
     const hasValidStartAt = 'startAt' in details && typeof details.startAt === 'number' && Number.isFinite(details.startAt)
     const hasValidEndAt = 'endAt' in details && typeof details.endAt === 'number' && Number.isFinite(details.endAt)
 
     if (!hasValidStartAt || !hasValidEndAt) {
-        throw 'INVALID_LEAVE_TIME'
+        return 'INVALID_LEAVE_TIME'
     }
 
     if (details.startAt >= details.endAt) {
-        throw 'INVALID_LEAVE_TIME_RANGE'
+        return 'INVALID_LEAVE_TIME_RANGE'
     }
+
+    return null
 }
 
 
 // Validate supported task list filters and time ranges
-export const validateListTasksPayload = (payload: ListTasksPayload): void => {
+export const validateListTasksPayload = (payload: ListTasksPayload): string | null => {
     const hasSubmitterId = payload.submitterId !== undefined
     const hasApproverId = payload.approverId !== undefined
     const hasObserverId = payload.observerId !== undefined
 
     if ([hasSubmitterId, hasApproverId, hasObserverId].filter(Boolean).length !== 1) {
-        throw 'INVALID_LIST_TASKS_USER'
+        return 'INVALID_LIST_TASKS_USER'
     }
 
     if (payload.submitterId !== undefined && (typeof payload.submitterId !== 'string' || payload.submitterId.trim().length === 0)) {
-        throw 'INVALID_LIST_TASKS_SUBMITTER_ID'
+        return 'INVALID_LIST_TASKS_SUBMITTER_ID'
     }
 
     if (payload.approverId !== undefined && (typeof payload.approverId !== 'string' || payload.approverId.trim().length === 0)) {
-        throw 'INVALID_LIST_TASKS_APPROVER_ID'
+        return 'INVALID_LIST_TASKS_APPROVER_ID'
     }
 
     if (payload.observerId !== undefined && (typeof payload.observerId !== 'string' || payload.observerId.trim().length === 0)) {
-        throw 'INVALID_LIST_TASKS_OBSERVER_ID'
+        return 'INVALID_LIST_TASKS_OBSERVER_ID'
     }
 
     if (payload.taskId !== undefined && (typeof payload.taskId !== 'string' || payload.taskId.trim().length === 0)) {
-        throw 'INVALID_LIST_TASKS_TASK_ID'
+        return 'INVALID_LIST_TASKS_TASK_ID'
     }
 
     if (payload.taskType !== undefined && !supportedTaskTypes.includes(payload.taskType)) {
-        throw 'INVALID_LIST_TASKS_TASK_TYPE'
+        return 'INVALID_LIST_TASKS_TASK_TYPE'
     }
 
     if (payload.status !== undefined && !supportedTaskStatuses.includes(payload.status)) {
-        throw 'INVALID_LIST_TASKS_STATUS'
+        return 'INVALID_LIST_TASKS_STATUS'
     }
 
     if (payload.leaveType !== undefined && payload.taskType !== 'leave') {
-        throw 'INVALID_LIST_TASKS_LEAVE_TYPE_FILTER'
+        return 'INVALID_LIST_TASKS_LEAVE_TYPE_FILTER'
     }
 
     if (payload.leaveType !== undefined && !supportedLeaveTypes.includes(payload.leaveType)) {
-        throw 'INVALID_LIST_TASKS_LEAVE_TYPE'
+        return 'INVALID_LIST_TASKS_LEAVE_TYPE'
     }
 
     if (payload.createdAtFrom !== undefined && !Number.isFinite(payload.createdAtFrom)) {
-        throw 'INVALID_LIST_TASKS_CREATED_AT_FROM'
+        return 'INVALID_LIST_TASKS_CREATED_AT_FROM'
     }
 
     if (payload.createdAtTo !== undefined && !Number.isFinite(payload.createdAtTo)) {
-        throw 'INVALID_LIST_TASKS_CREATED_AT_TO'
+        return 'INVALID_LIST_TASKS_CREATED_AT_TO'
     }
 
     if (payload.createdAtFrom !== undefined && payload.createdAtTo !== undefined && payload.createdAtFrom > payload.createdAtTo) {
-        throw 'INVALID_LIST_TASKS_CREATED_AT_RANGE'
+        return 'INVALID_LIST_TASKS_CREATED_AT_RANGE'
     }
 
     if (payload.reviewedAtFrom !== undefined && !Number.isFinite(payload.reviewedAtFrom)) {
-        throw 'INVALID_LIST_TASKS_REVIEWED_AT_FROM'
+        return 'INVALID_LIST_TASKS_REVIEWED_AT_FROM'
     }
 
     if (payload.reviewedAtTo !== undefined && !Number.isFinite(payload.reviewedAtTo)) {
-        throw 'INVALID_LIST_TASKS_REVIEWED_AT_TO'
+        return 'INVALID_LIST_TASKS_REVIEWED_AT_TO'
     }
 
     if (payload.reviewedAtFrom !== undefined && payload.reviewedAtTo !== undefined && payload.reviewedAtFrom > payload.reviewedAtTo) {
-        throw 'INVALID_LIST_TASKS_REVIEWED_AT_RANGE'
+        return 'INVALID_LIST_TASKS_REVIEWED_AT_RANGE'
     }
+
+    return null
 }
 
 

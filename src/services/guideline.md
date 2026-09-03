@@ -2,6 +2,8 @@
 
 All internal services or 3rd party APIs are considered as "services". All files with functions that calling the "services" should put in this directory. All functions should be exported and called by other handler functions.
 
+`index.ts` is the public service router. Business functions, service error handling, and their private support functions belong in `handlers/`.
+
 Example of exporting functions like such:
 ```javascript
 export const funcName = async (param: any) => {
